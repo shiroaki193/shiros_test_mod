@@ -1,0 +1,57 @@
+### Gradle ###
+.gradle
+.gradle-home/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/**/out/
+
+.run/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.eclipse/
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/**/bin/
+
+### VS Code ###
+.vscode/
+
+### OS ###
+.DS_Store
+Thumbs.db
+desktop.ini
+
+### Python (tools/) ###
+__pycache__/
+*.pyc
+
+### Logs and crash output ###
+*.log
+hs_err_pid*.log
+crash-reports/
+
+### Minecraft Modding ###
+# Dev client/server game dirs: worlds, configs, logs, the demo world, GameTest output
+run/
+runs/
+!**/src/**/run/
+**/src/generated/**/.cache/
+repo/
+!**/src/**/repo/
+# Decompiled sources extracted for API lookup (under build/, listed for clarity)
+build/mc-src/
+build/neo-src/

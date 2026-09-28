@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import com.mojang.logging.LogUtils;
 import com.shiroaki193.mod.carry.CarryEvents;
 import com.shiroaki193.mod.entity.MortarCreeper;
+import com.shiroaki193.mod.entity.NaturalMortarSpawns;
 import com.shiroaki193.mod.entity.ai.InterceptShellGoal;
 import com.shiroaki193.mod.entity.ai.ThrowCatGoal;
 import com.shiroaki193.mod.gametest.ModGameTests;
@@ -36,6 +37,7 @@ public class MobArmsRace {
         ModParticles.PARTICLE_TYPES.register(modEventBus);
         ModGameTests.register(modEventBus);
         CarryEvents.register();
+        NaturalMortarSpawns.register();
 
         modEventBus.addListener(this::registerAttributes);
         modEventBus.addListener(this::addCreative);
@@ -63,6 +65,11 @@ public class MobArmsRace {
         }
         if (event.getEntity() instanceof SnowGolem golem) {
             golem.goalSelector.addGoal(0, new InterceptShellGoal(golem));
+            // The first place a golem shows up becomes its post (saved with the golem, so it sticks).
+            int post = Config.CIWS_POST_RADIUS.get();
+            if (post > 0 && !golem.hasHome()) {
+                golem.setHomeTo(golem.blockPosition(), post);
+            }
         } else if (event.getEntity() instanceof IronGolem golem) {
             golem.goalSelector.addGoal(1, new ThrowCatGoal(golem));
         } else if (event.getEntity() instanceof Cat cat && cat.entityTags().contains(ThrowCatGoal.TAG_AIRBORNE)) {

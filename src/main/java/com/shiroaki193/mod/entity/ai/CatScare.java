@@ -30,7 +30,7 @@ public final class CatScare {
             away = away.lengthSqr() < 1.0e-4 ? new Vec3(1, 0, 0) : away.normalize();
             creeper.push(away.x * PUSH, 0.35, away.z * PUSH);
             creeper.hurtMarked = true;
-            level.sendParticles(ParticleTypes.ANGRY_VILLAGER, creeper.getX(), creeper.getEyeY() + 0.4, creeper.getZ(), 3, 0.3, 0.2, 0.3, 0);
+            level.sendParticles(ParticleTypes.ANGRY_VILLAGER, true, true, creeper.getX(), creeper.getEyeY() + 0.4, creeper.getZ(), 3, 0.3, 0.2, 0.3, 0);
             scared++;
         }
         if (scared > 0) {

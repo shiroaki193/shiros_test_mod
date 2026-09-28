@@ -24,7 +24,10 @@ import net.minecraft.world.phys.Vec3;
 /** The "firework + elytra creeper" mortar round. Flies the {@link Ballistics} arc and explodes on impact. */
 public class CreeperShell extends ThrowableItemProjectile {
     private static final int TRAIL_PARTICLES_PER_TICK = 8;
+    private static final double RENDER_DISTANCE = 256.0;
 
+    /** Game time of this shell's last move, see {@link #hasMovedThisTick()}. */
+    private long lastMoveTime = Long.MIN_VALUE;
     private boolean detonated;
     private boolean intercepted;
     private Vec3 detonationPos = Vec3.ZERO;
@@ -51,15 +54,32 @@ public class CreeperShell extends ThrowableItemProjectile {
         return Ballistics.GRAVITY;
     }
 
+    /**
+     * Entities tick in spawn order, so a shell (spawned after the golems) usually has not moved yet
+     * when a golem aims at it in the same game tick. Aiming must then account for that extra move,
+     * otherwise every shot arrives one tick late, which misses fast-falling shells by 2+ blocks.
+     */
+    public boolean hasMovedThisTick() {
+        return this.lastMoveTime == this.level().getGameTime();
+    }
+
     /** Snapshot for prediction; matches what the next {@link #tick()} will do. */
     public Ballistics.State ballisticState() {
         Vec3 v = this.getDeltaMovement();
         return new Ballistics.State(this.getX(), this.getY(), this.getZ(), v.x, v.y, v.z);
     }
 
+    /** Vanilla stops rendering small projectiles at 128 blocks; shells are watched from much farther. */
+    @Override
+    public boolean shouldRenderAtSqrDistance(double distance) {
+        double max = RENDER_DISTANCE * getViewScale();
+        return distance < max * max;
+    }
+
     @Override
     public void tick() {
         super.tick();
+        this.lastMoveTime = this.level().getGameTime();
         if (this.level().isClientSide() && this.isAlive()) {
             spawnTrail();
         }
@@ -76,7 +96,7 @@ public class CreeperShell extends ThrowableItemProjectile {
                     0, 0, 0);
         }
         if (this.random.nextInt(3) == 0) {
-            this.level().addParticle(ParticleTypes.FIREWORK, this.getX(), this.getY(), this.getZ(),
+            this.level().addParticle(ParticleTypes.FIREWORK, true, true, this.getX(), this.getY(), this.getZ(),
                     this.random.nextGaussian() * 0.02, -0.05, this.random.nextGaussian() * 0.02);
         }
     }
@@ -108,8 +128,8 @@ public class CreeperShell extends ThrowableItemProjectile {
         }
         this.intercepted = true;
         this.detonationPos = this.position();
-        serverLevel.sendParticles(ParticleTypes.FIREWORK, this.getX(), this.getY(), this.getZ(), 40, 0.2, 0.2, 0.2, 0.25);
-        serverLevel.sendParticles(ParticleTypes.CLOUD, this.getX(), this.getY(), this.getZ(), 8, 0.3, 0.3, 0.3, 0.02);
+        serverLevel.sendParticles(ParticleTypes.FIREWORK, true, true, this.getX(), this.getY(), this.getZ(), 40, 0.2, 0.2, 0.2, 0.25);
+        serverLevel.sendParticles(ParticleTypes.CLOUD, true, true, this.getX(), this.getY(), this.getZ(), 8, 0.3, 0.3, 0.3, 0.02);
         serverLevel.playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.FIREWORK_ROCKET_BLAST,
                 SoundSource.HOSTILE, 3.0F, 0.9F + this.random.nextFloat() * 0.2F);
         this.discard();

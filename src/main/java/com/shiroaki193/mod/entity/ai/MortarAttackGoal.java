@@ -14,16 +14,21 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.phys.Vec3;
 
-/** Stops, winds up (flashing like a primed creeper), then fires its shells as one salvo. */
+/**
+ * Stops, winds up (flashing like a primed creeper), fires its shells as one salvo, then holds
+ * position while reloading and repeats for as long as the target stays in range.
+ */
 public class MortarAttackGoal extends Goal {
     /** Kept below the creeper fuse (30 ticks) so the wind-up never detonates the mortar itself. */
     public static final int WINDUP_TICKS = 16;
     private static final double LAUNCH_HEIGHT = 1.9;
 
+    private enum Phase { WINDUP, FIRING, RELOADING }
+
     private final MortarCreeper mortar;
+    private Phase phase = Phase.WINDUP;
     private int windup;
     private int nextShotIn;
-    private boolean firing;
 
     public MortarAttackGoal(MortarCreeper mortar) {
         this.mortar = mortar;
@@ -33,7 +38,8 @@ public class MortarAttackGoal extends Goal {
     @Override
     public boolean canUse() {
         // A cat nearby breaks the firing position (and aborts a salvo in progress).
-        return this.mortar.getAmmo() > 0 && this.targetInRange() && !CatScare.isNearCat(this.mortar);
+        return (this.mortar.getAmmo() > 0 || this.mortar.isReloading())
+                && this.targetInRange() && !CatScare.isNearCat(this.mortar);
     }
 
     @Override
@@ -60,15 +66,23 @@ public class MortarAttackGoal extends Goal {
     @Override
     public void start() {
         this.mortar.getNavigation().stop();
-        this.windup = WINDUP_TICKS;
-        this.firing = false;
-        this.mortar.setSwellDir(1);
+        this.startWindupOrReload();
     }
 
     @Override
     public void stop() {
         this.mortar.setSwellDir(-1);
-        this.firing = false;
+    }
+
+    private void startWindupOrReload() {
+        if (this.mortar.getAmmo() > 0) {
+            this.phase = Phase.WINDUP;
+            this.windup = WINDUP_TICKS;
+            this.mortar.setSwellDir(1);
+        } else {
+            this.phase = Phase.RELOADING;
+            this.mortar.setSwellDir(-1);
+        }
     }
 
     @Override
@@ -78,17 +92,28 @@ public class MortarAttackGoal extends Goal {
             return;
         }
         this.mortar.getLookControl().setLookAt(target, 30.0F, 30.0F);
-        if (!this.firing) {
-            if (--this.windup <= 0) {
-                this.firing = true;
-                this.nextShotIn = 0;
-                this.mortar.setSwellDir(-1);
+        this.mortar.getNavigation().stop();
+        switch (this.phase) {
+            case WINDUP -> {
+                if (--this.windup <= 0) {
+                    this.phase = Phase.FIRING;
+                    this.nextShotIn = 0;
+                    this.mortar.setSwellDir(-1);
+                }
             }
-            return;
-        }
-        if (--this.nextShotIn <= 0) {
-            this.fireAt(target);
-            this.nextShotIn = Config.MORTAR_SALVO_INTERVAL.get();
+            case FIRING -> {
+                if (this.mortar.getAmmo() == 0) {
+                    this.startWindupOrReload();
+                } else if (--this.nextShotIn <= 0) {
+                    this.fireAt(target);
+                    this.nextShotIn = Config.MORTAR_SALVO_INTERVAL.get();
+                }
+            }
+            case RELOADING -> {
+                if (this.mortar.getAmmo() > 0) {
+                    this.startWindupOrReload();
+                }
+            }
         }
     }
 
@@ -112,8 +137,8 @@ public class MortarAttackGoal extends Goal {
         level.addFreshEntity(shell);
         this.mortar.consumeAmmo();
 
-        level.sendParticles(ParticleTypes.EXPLOSION, from.x, from.y, from.z, 1, 0, 0, 0, 0);
-        level.sendParticles(ParticleTypes.POOF, from.x, from.y - 0.5, from.z, 12, 0.4, 0.2, 0.4, 0.05);
+        level.sendParticles(ParticleTypes.EXPLOSION, true, true, from.x, from.y, from.z, 1, 0, 0, 0, 0);
+        level.sendParticles(ParticleTypes.POOF, true, true, from.x, from.y - 0.5, from.z, 12, 0.4, 0.2, 0.4, 0.05);
         this.mortar.playSound(SoundEvents.FIREWORK_ROCKET_LAUNCH, 3.0F, 0.8F + this.mortar.getRandom().nextFloat() * 0.2F);
     }
 }

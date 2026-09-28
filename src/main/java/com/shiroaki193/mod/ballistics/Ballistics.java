@@ -180,6 +180,63 @@ public final class Ballistics {
         return speed * drag * (1 - Math.pow(drag, ticks)) / (1 - drag);
     }
 
+    /**
+     * Shortest distance between segments {@code a0-a1} and {@code b0-b1} (points as {x, y, z}).
+     * Used for hit tests between two fast movers without relying on which one ticked first.
+     */
+    public static double segmentDistance(double[] a0, double[] a1, double[] b0, double[] b1) {
+        double[] d1 = sub(a1, a0);
+        double[] d2 = sub(b1, b0);
+        double[] r = sub(a0, b0);
+        double a = dot(d1, d1);
+        double e = dot(d2, d2);
+        double f = dot(d2, r);
+        double s;
+        double t;
+        if (a < 1.0e-12 && e < 1.0e-12) {
+            return Math.sqrt(dot(r, r));
+        }
+        if (a < 1.0e-12) {
+            s = 0;
+            t = clamp01(f / e);
+        } else {
+            double c = dot(d1, r);
+            if (e < 1.0e-12) {
+                t = 0;
+                s = clamp01(-c / a);
+            } else {
+                double b = dot(d1, d2);
+                double denom = a * e - b * b;
+                s = denom > 1.0e-12 ? clamp01((b * f - c * e) / denom) : 0;
+                t = (b * s + f) / e;
+                if (t < 0) {
+                    t = 0;
+                    s = clamp01(-c / a);
+                } else if (t > 1) {
+                    t = 1;
+                    s = clamp01((b - c) / a);
+                }
+            }
+        }
+        double[] diff = new double[3];
+        for (int i = 0; i < 3; i++) {
+            diff[i] = (a0[i] + d1[i] * s) - (b0[i] + d2[i] * t);
+        }
+        return Math.sqrt(dot(diff, diff));
+    }
+
+    private static double[] sub(double[] p, double[] q) {
+        return new double[] {p[0] - q[0], p[1] - q[1], p[2] - q[2]};
+    }
+
+    private static double dot(double[] p, double[] q) {
+        return p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    }
+
+    private static double clamp01(double v) {
+        return v < 0 ? 0 : v > 1 ? 1 : v;
+    }
+
     /** Result of a lead calculation: aim at this point; the bullet gets there after {@code ticks}. */
     public record Intercept(double x, double y, double z, int ticks) {
     }

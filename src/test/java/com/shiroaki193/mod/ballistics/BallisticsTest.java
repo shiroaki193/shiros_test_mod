@@ -58,6 +58,37 @@ class BallisticsTest {
     }
 
     @Test
+    void segmentDistanceCases() {
+        double[] o = {0, 0, 0};
+        // Crossing segments (a horizontal bullet path through a vertical shell path) touch.
+        assertEquals(0.0, Ballistics.segmentDistance(new double[] {-2, 5, 0}, new double[] {2, 5, 0},
+                new double[] {0, 7, 0}, new double[] {0, 3, 0}), 1e-12);
+        // Parallel segments one block apart.
+        assertEquals(1.0, Ballistics.segmentDistance(o, new double[] {4, 0, 0},
+                new double[] {0, 1, 0}, new double[] {4, 1, 0}), 1e-12);
+        // Closest points are endpoints.
+        assertEquals(Math.sqrt(2), Ballistics.segmentDistance(o, new double[] {1, 0, 0},
+                new double[] {2, 1, 0}, new double[] {3, 1, 0}), 1e-12);
+        // Degenerate segments (points).
+        assertEquals(5.0, Ballistics.segmentDistance(o, o, new double[] {3, 4, 0}, new double[] {3, 4, 0}), 1e-12);
+    }
+
+    /**
+     * The in-game bug: a shell falling 2.2 blocks/tick moves before the bullet in each tick, so
+     * comparing "shell now" with "bullet now" is off by a tick. Path segments are order-agnostic.
+     */
+    @Test
+    void fastFallingShellIsHitWhateverTheTickOrder() {
+        double[] meet = {10, 20, 0};
+        double[] shellBefore = {10, 22.2, 0};        // shell path this tick ends at the meeting point
+        double[] bulletBefore = {6, 20, 0};           // bullet path this tick ends there too
+        double[] shellAfter = {10, 17.8, 0};          // shell already moved on (it ticks first)
+        assertEquals(0.0, Math.min(
+                Ballistics.segmentDistance(bulletBefore, meet, shellBefore, meet),
+                Ballistics.segmentDistance(bulletBefore, meet, meet, shellAfter)), 1e-12);
+    }
+
+    @Test
     void maxRangeShotMatchesDesign() {
         double speed = Ballistics.solveSpeed(120, 0, PITCH);
         Ballistics.Landing landing = Ballistics.landing(

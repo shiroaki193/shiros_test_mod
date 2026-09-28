@@ -1,11 +1,11 @@
 # Mob Arms Race
 
-*Creeper mortars vs. village air defence — a NeoForge mod for Minecraft 26.1.*
+*Creeper mortars vs. village air defence — a NeoForge mod for Minecraft 26.1.2.*
 
 苦力怕學會了迫擊炮，村莊也組織起防空。
 
-- **迫擊炮苦力怕**：從 120 格外朝村莊齊射苦力怕炮彈。
-- **雪傀儡近防炮**：所有雪傀儡都會用高速雪球擊落正在下降的炮彈。
+- **迫擊炮苦力怕**：自然生成的苦力怕有 40% 會是它。從 120 格外朝村莊齊射苦力怕炮彈。
+- **雪傀儡近防炮**：所有雪傀儡都會用高速雪球擊落正在下降的炮彈，沒有炮彈時也會連射附近的敵對生物。
 - **手持苦力怕炮彈**：玩家看哪裡就打哪裡，拿在手上時會顯示落點準星。
 - **抓起並投擲苦力怕**：空手把苦力怕收進手中，再丟出去炸。
 - **鐵傀儡擲貓**：鐵傀儡把貓丟到苦力怕旁邊，把它們嚇散。
@@ -16,8 +16,8 @@
 
 | 需求 | 版本 |
 |---|---|
-| Minecraft | 26.1 |
-| NeoForge | 26.1.0.19-beta |
+| Minecraft | 26.1.2 |
+| NeoForge | 26.1.2.109 或更新 |
 | Java | 25 |
 
 把 `mobarmsrace-<版本>.jar` 放進遊戲的 `mods` 資料夾即可。

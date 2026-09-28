@@ -1,12 +1,15 @@
 """Stages the visual demo world for `gradlew runDemoClient`.
 
 Copies the superflat world left behind by `gradlew runGameTestServer` into run/saves/arms_race_demo
-and installs tools/demo_datapack, which loops three waves, 20 s each:
+and installs tools/demo_datapack, which loops five waves, 20 s each:
   ciws: (night) mortar creeper vs. a villager guarded by two snow golems, side view
   cat:  (day) an iron golem fetches a cat and throws it at a creeper, side view
   aim:  (day) first-person, holding creeper shells: landing preview on a spot 31 blocks away
+  long: (night) 120 block salvo at two snow golems, watched from 60 blocks to the side
+  zombie: (night) three zombies walk at a villager guarded by two snow golems
 
-Usage: gradlew runGameTestServer (once), then python tools/setup_demo_world.py
+Usage: gradlew runGameTestServer (once), then python tools/setup_demo_world.py [first wave]
+  first wave: ciws | cat | aim | long | zombie (default ciws)
 """
 import pathlib
 import shutil
@@ -27,13 +30,22 @@ DEMO_OPTIONS = {
 }
 
 
+WAVES = ["ciws", "cat", "aim", "long", "zombie"]
+
+
 def main():
+    first = sys.argv[1] if len(sys.argv) > 1 else WAVES[0]
+    if first not in WAVES:
+        sys.exit(f"unknown wave {first!r}; pick one of {WAVES}")
     if not SOURCE_WORLD.exists():
         sys.exit(f"{SOURCE_WORLD} not found - run `gradlew runGameTestServer` first")
     if TARGET_WORLD.exists():
         shutil.rmtree(TARGET_WORLD)
     shutil.copytree(SOURCE_WORLD, TARGET_WORLD, ignore=shutil.ignore_patterns("session.lock"))
     shutil.copytree(DATAPACK, TARGET_WORLD / "datapacks/mobarmsrace_demo")
+    load = TARGET_WORLD / "datapacks/mobarmsrace_demo/data/mobarmsrace_demo/function/load.mcfunction"
+    with load.open("a", encoding="utf-8") as f:
+        f.write(f"scoreboard players set #wave mar_demo {WAVES.index(first)}\n")
 
     if OPTIONS.exists():
         lines = OPTIONS.read_text(encoding="utf-8").splitlines()

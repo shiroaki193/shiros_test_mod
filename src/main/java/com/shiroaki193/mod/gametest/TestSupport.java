@@ -56,6 +56,25 @@ final class TestSupport {
         return player;
     }
 
+    /**
+     * Where interceptions happened: mean and lowest height above the target's ground, and mean
+     * distance from the nearest golem. Low, close intercepts read as near-misses over the village.
+     */
+    static String interceptStats(GameTestHelper helper, java.util.Collection<CreeperShell> shells,
+                                 java.util.List<? extends Entity> golems) {
+        double ground = helper.absoluteVec(new Vec3(0, GROUND, 0)).y;
+        java.util.List<Vec3> points = shells.stream().filter(CreeperShell::isIntercepted).map(CreeperShell::getDetonationPos).toList();
+        if (points.isEmpty()) {
+            return "no intercepts";
+        }
+        double meanHeight = points.stream().mapToDouble(p -> p.y - ground).average().orElse(0);
+        double minHeight = points.stream().mapToDouble(p -> p.y - ground).min().orElse(0);
+        double meanRange = points.stream()
+                .mapToDouble(p -> golems.stream().mapToDouble(g -> g.getEyePosition().distanceTo(p)).min().orElse(0))
+                .average().orElse(0);
+        return String.format("intercept height mean %.1f / min %.1f blocks, %.1f blocks from the golem", meanHeight, minHeight, meanRange);
+    }
+
     static void removePlayer(GameTestHelper helper, ServerPlayer player) {
         helper.getLevel().getServer().getPlayerList().remove(player);
     }

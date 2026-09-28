@@ -3,7 +3,9 @@ package com.shiroaki193.mod.entity;
 import com.shiroaki193.mod.Config;
 import com.shiroaki193.mod.entity.ai.MortarAttackGoal;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.AvoidEntityGoal;
@@ -18,6 +20,7 @@ import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.animal.feline.Cat;
 import net.minecraft.world.entity.animal.feline.Ocelot;
 import net.minecraft.world.entity.animal.golem.IronGolem;
+import net.minecraft.world.entity.animal.golem.SnowGolem;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.npc.villager.AbstractVillager;
 import net.minecraft.world.entity.player.Player;
@@ -27,13 +30,16 @@ import net.minecraft.world.level.storage.ValueOutput;
 
 /**
  * A creeper carrying firework-and-elytra creepers as mortar rounds. It shells villages from up to
- * 120 blocks away and falls back to ordinary creeper behaviour once it runs out of ammo.
+ * 120 blocks away, reloads a full salvo after each one, and keeps firing while it has a target in
+ * range. With reloading disabled it falls back to ordinary creeper behaviour once out of ammo.
  */
 public class MortarCreeper extends Creeper {
     /** Covers the full firing range; target lookups use this attribute. */
     public static final double FOLLOW_RANGE = 128.0;
 
     private int ammo = Config.MORTAR_AMMO.get();
+    private int reloadTicksLeft;
+    private boolean naturalSpawn;
 
     public MortarCreeper(EntityType<? extends MortarCreeper> type, Level level) {
         super(type, level);
@@ -56,9 +62,33 @@ public class MortarCreeper extends Creeper {
         this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
         // Indirect fire: targets do not need to be in line of sight.
         this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
-        this.targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, AbstractVillager.class, false));
-        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, IronGolem.class, false));
-        this.targetSelector.addGoal(4, new NearestAttackableTargetGoal<>(this, Player.class, false));
+        // The village first: villagers and both golem kinds (knocking out snow golems opens the air defence).
+        this.targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, LivingEntity.class, 10, false, false,
+                (target, level) -> isVillageTarget(target)));
+        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Player.class, false));
+    }
+
+    public static boolean isVillageTarget(LivingEntity target) {
+        return target instanceof AbstractVillager || target instanceof IronGolem || target instanceof SnowGolem;
+    }
+
+    /**
+     * Artillery sits far from players by design (up to 120 blocks). Vanilla despawns hostile mobs
+     * beyond 128 blocks at once, and beyond 32 after 30 s idle, which is exactly a reloading mortar.
+     * So placed mortars (spawn egg, commands) stay. Natural spawns still despawn like any monster,
+     * or the world would fill up with them.
+     */
+    @Override
+    public boolean removeWhenFarAway(double distSqr) {
+        return this.naturalSpawn && super.removeWhenFarAway(distSqr);
+    }
+
+    public void markNaturalSpawn() {
+        this.naturalSpawn = true;
+    }
+
+    public boolean isNaturalSpawn() {
+        return this.naturalSpawn;
     }
 
     public int getAmmo() {
@@ -71,17 +101,37 @@ public class MortarCreeper extends Creeper {
 
     public void consumeAmmo() {
         this.setAmmo(this.ammo - 1);
+        if (this.ammo == 0) {
+            this.reloadTicksLeft = Config.MORTAR_RELOAD_TICKS.get();
+        }
+    }
+
+    /** Out of shells but refilling; the mortar holds its firing position meanwhile. */
+    public boolean isReloading() {
+        return this.ammo == 0 && Config.MORTAR_RELOAD_TICKS.get() > 0;
+    }
+
+    @Override
+    protected void customServerAiStep(ServerLevel level) {
+        super.customServerAiStep(level);
+        if (this.isReloading() && --this.reloadTicksLeft <= 0) {
+            this.ammo = Config.MORTAR_AMMO.get();
+        }
     }
 
     @Override
     protected void addAdditionalSaveData(ValueOutput output) {
         super.addAdditionalSaveData(output);
         output.putInt("MortarAmmo", this.ammo);
+        output.putInt("MortarReload", this.reloadTicksLeft);
+        output.putBoolean("MortarNaturalSpawn", this.naturalSpawn);
     }
 
     @Override
     protected void readAdditionalSaveData(ValueInput input) {
         super.readAdditionalSaveData(input);
         this.ammo = input.getIntOr("MortarAmmo", Config.MORTAR_AMMO.get());
+        this.reloadTicksLeft = input.getIntOr("MortarReload", Config.MORTAR_RELOAD_TICKS.get());
+        this.naturalSpawn = input.getBooleanOr("MortarNaturalSpawn", false);
     }
 }

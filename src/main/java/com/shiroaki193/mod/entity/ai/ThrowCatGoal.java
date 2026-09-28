@@ -205,7 +205,7 @@ public class ThrowCatGoal extends Goal {
 
     private void tickFlight(Cat cat) {
         if (this.golem.level() instanceof ServerLevel level) {
-            level.sendParticles(ParticleTypes.CLOUD, cat.getX(), cat.getY() + 0.3, cat.getZ(), 1, 0.05, 0.05, 0.05, 0);
+            level.sendParticles(ParticleTypes.CLOUD, true, true, cat.getX(), cat.getY() + 0.3, cat.getZ(), 1, 0.05, 0.05, 0.05, 0);
             boolean landed = this.phaseTicks > 2 && (cat.onGround() || cat.isInWater());
             if (landed || this.phaseTicks > MAX_FLIGHT_TICKS) {
                 CatScare.scareAround(level, cat);

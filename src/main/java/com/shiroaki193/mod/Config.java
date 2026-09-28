@@ -10,8 +10,17 @@ public class Config {
     }
 
     public static final ModConfigSpec.IntValue MORTAR_AMMO = BUILDER
-            .comment("Shells a mortar creeper carries. It turns back into a normal creeper once they are spent.")
+            .comment("Shells per salvo (the mortar carries one salvo and reloads it, see reloadTicks).")
             .defineInRange("ammo", 4, 1, 64);
+
+    public static final ModConfigSpec.DoubleValue MORTAR_NATURAL_SHARE = BUILDER
+            .comment("Share of naturally spawning creepers that spawn as mortar creepers instead (0 = none, 1 = all).",
+                    "Naturally spawned mortars despawn like other monsters; ones from spawn eggs or commands never despawn.")
+            .defineInRange("naturalShare", 0.4, 0.0, 1.0);
+
+    public static final ModConfigSpec.IntValue MORTAR_RELOAD_TICKS = BUILDER
+            .comment("Ticks to reload a full salvo after the last shell. 0 = no reload: the mortar turns back into a normal creeper.")
+            .defineInRange("reloadTicks", 160, 0, 12000);
 
     public static final ModConfigSpec.DoubleValue MORTAR_MAX_RANGE = BUILDER
             .comment("Maximum horizontal firing range in blocks.")
@@ -41,13 +50,26 @@ public class Config {
             .comment("Give every snow golem the close-in anti-shell defence.")
             .define("enabled", true);
 
+    public static final ModConfigSpec.DoubleValue CIWS_ANTI_MOB_RANGE = BUILDER
+            .comment("When no shell is incoming, golems turn the same rapid fire on hostile mobs (zombies, skeletons...) this close. 0 = off.")
+            .defineInRange("antiMobRange", 24.0, 0.0, 64.0);
+
+    public static final ModConfigSpec.DoubleValue CIWS_ANTI_MOB_DAMAGE = BUILDER
+            .comment("Damage per interceptor snowball against hostile mobs (vanilla snowballs deal 0; a zombie has 20 health).")
+            .defineInRange("antiMobDamage", 2.0, 0.0, 20.0);
+
+    public static final ModConfigSpec.IntValue CIWS_POST_RADIUS = BUILDER
+            .comment("Snow golems keep within this many blocks of where they were placed, so they stay next to what they guard",
+                    "(they only defend shells landing within protectRadius of themselves). 0 = wander freely like vanilla.")
+            .defineInRange("postRadius", 6, 0, 64);
+
     public static final ModConfigSpec.DoubleValue CIWS_DETECT_RANGE = BUILDER
             .comment("Range at which a snow golem starts tracking shells.")
-            .defineInRange("detectRange", 48.0, 8.0, 128.0);
+            .defineInRange("detectRange", 64.0, 8.0, 128.0);
 
     public static final ModConfigSpec.DoubleValue CIWS_ENGAGE_RANGE = BUILDER
             .comment("Terminal-phase range: the golem only fires at descending shells this close.")
-            .defineInRange("engageRange", 28.0, 4.0, 64.0);
+            .defineInRange("engageRange", 44.0, 4.0, 64.0);
 
     public static final ModConfigSpec.DoubleValue CIWS_PROTECT_RADIUS = BUILDER
             .comment("Only shells predicted to land within this radius of the golem are engaged.")
@@ -62,8 +84,9 @@ public class Config {
             .defineInRange("bulletSpeed", 4.0, 1.0, 8.0);
 
     public static final ModConfigSpec.DoubleValue CIWS_SPREAD = BUILDER
-            .comment("Aim spread in degrees. Measured with two golems vs 4-shell salvos: 16 -> 96%, 18 -> 90%, 20 -> 67% intercepted.")
-            .defineInRange("spreadDegrees", 18.0, 0.0, 30.0);
+            .comment("Aim spread in degrees. Wider spreads send more snowballs into nearby roofs and trees in a village:",
+                    "in the village regression test 10 stops every shell, 18 lets roughly 1 in 12 through.")
+            .defineInRange("spreadDegrees", 10.0, 0.0, 30.0);
 
     static {
         BUILDER.pop().push("ironGolemCatThrow");

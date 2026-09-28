@@ -1,16 +1,19 @@
-"""Generates the GameTest arena structure (src/main/resources/data/mobarmsrace/structure/arena.nbt).
+"""Generates the GameTest arena structures (src/main/resources/data/mobarmsrace/structure/).
 
-48 x 40 x 9 blocks: a stone floor at y=0 and open air above, big enough for ~40 block mortar
-shots (apex ~20 blocks). Regenerate after changing the size: python tools/gen_test_arena.py
+Each is a stone floor at y=0 with open air above (tests run with sky access, so no ceiling):
+  arena.nbt       48 x 40 x 9   ~40 block shots (apex ~20 blocks)
+  arena_long.nbt  128 x 12 x 9  up to 120 block shots; the arc (apex ~70) flies above the box
+  arena_wide.nbt  128 x 12 x 33 room for a small village scene beside the firing line
+Regenerate after changing a size: python tools/gen_test_arena.py
 """
 import gzip
 import io
 import pathlib
 import struct
 
-SIZE_X, SIZE_Y, SIZE_Z = 48, 40, 9
-DATA_VERSION = 4786  # Minecraft 26.1 (build/mc-src/version.json "world_version")
-OUT = pathlib.Path(__file__).resolve().parent.parent / "src/main/resources/data/mobarmsrace/structure/arena.nbt"
+ARENAS = {"arena": (48, 40, 9), "arena_long": (128, 12, 9), "arena_wide": (128, 12, 33)}
+DATA_VERSION = 4790  # Minecraft 26.1.2 ("world_version" in the Minecraft jar's version.json)
+OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src/main/resources/data/mobarmsrace/structure"
 
 TAG_END, TAG_INT, TAG_STRING, TAG_LIST, TAG_COMPOUND = 0, 3, 8, 9, 10
 
@@ -43,14 +46,14 @@ def int_list(*xs):
     return (TAG_LIST, (TAG_INT, list(xs)))
 
 
-def main():
+def write_arena(name, size_x, size_y, size_z):
     blocks = [
         {"pos": int_list(x, 0, z), "state": (TAG_INT, 0)}
-        for x in range(SIZE_X)
-        for z in range(SIZE_Z)
+        for x in range(size_x)
+        for z in range(size_z)
     ]
     root = {
-        "size": int_list(SIZE_X, SIZE_Y, SIZE_Z),
+        "size": int_list(size_x, size_y, size_z),
         "entities": (TAG_LIST, (TAG_COMPOUND, [])),
         "blocks": (TAG_LIST, (TAG_COMPOUND, blocks)),
         "palette": (TAG_LIST, (TAG_COMPOUND, [{"Name": (TAG_STRING, "minecraft:stone")}])),
@@ -60,9 +63,15 @@ def main():
     buf.write(struct.pack(">b", TAG_COMPOUND))
     w_str(buf, "")
     w_payload(buf, TAG_COMPOUND, root)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_bytes(gzip.compress(buf.getvalue()))
-    print(f"wrote {OUT} ({SIZE_X}x{SIZE_Y}x{SIZE_Z}, {len(blocks)} floor blocks)")
+    out = OUT_DIR / f"{name}.nbt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(gzip.compress(buf.getvalue(), mtime=0))  # deterministic output
+    print(f"wrote {out} ({size_x}x{size_y}x{size_z}, {len(blocks)} floor blocks)")
+
+
+def main():
+    for name, size in ARENAS.items():
+        write_arena(name, *size)
 
 
 if __name__ == "__main__":

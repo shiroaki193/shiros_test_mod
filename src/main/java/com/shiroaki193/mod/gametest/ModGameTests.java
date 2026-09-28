@@ -29,35 +29,39 @@ public final class ModGameTests {
     private static final Identifier ARENA_LONG = id("arena_long");
     private static final Identifier ARENA_WIDE = id("arena_wide");
 
-    /** {@code maxAttempts > 1} only where randomness is part of the design (CIWS spread). */
-    private record TestSpec(String name, Identifier structure, int maxTicks, int maxAttempts, Consumer<GameTestHelper> body) {
-        TestSpec(String name, int maxTicks, int maxAttempts, Consumer<GameTestHelper> body) {
-            this(name, ARENA, maxTicks, maxAttempts, body);
-        }
-
+    /**
+     * No maxAttempts here: GameTestServer never retries (retries only apply to the in-game /test
+     * command). Tests with random outcomes fire enough shells to judge the rate themselves.
+     */
+    private record TestSpec(String name, Identifier structure, int maxTicks, Consumer<GameTestHelper> body) {
         TestSpec(String name, int maxTicks, Consumer<GameTestHelper> body) {
-            this(name, ARENA, maxTicks, 1, body);
+            this(name, ARENA, maxTicks, body);
         }
     }
 
     private static final List<TestSpec> TESTS = List.of(
             // Mortar vs. snow golem
             new TestSpec("shell_lands_on_target", 200, ArmsRaceTests::shellLandsOnTarget),
-            new TestSpec("snow_golem_intercepts_shell", 200, 3, ArmsRaceTests::snowGolemInterceptsShell),
+            new TestSpec("snow_golem_intercepts_shell", 1000, ArmsRaceTests::snowGolemInterceptsShell),
             new TestSpec("snow_golem_ignores_shell_landing_elsewhere", 200, ArmsRaceTests::snowGolemIgnoresDistantShell),
             new TestSpec("mortar_creeper_shells_villager", 400, ArmsRaceTests::mortarCreeperShellsVillager),
-            new TestSpec("snow_golems_defend_villager", 400, 2, ArmsRaceTests::snowGolemsDefendVillager),
-            new TestSpec("snow_golems_stop_long_range_salvo", ARENA_LONG, 300, 2, ArmsRaceTests::snowGolemsStopLongRangeSalvo),
+            new TestSpec("snow_golems_defend_villager", 600, ArmsRaceTests::snowGolemsDefendVillager),
+            new TestSpec("snow_golems_stop_long_range_salvo", ARENA_LONG, 900, ArmsRaceTests::snowGolemsStopLongRangeSalvo),
             new TestSpec("snow_golem_holds_post", 1300, ArmsRaceTests::snowGolemHoldsPost),
             new TestSpec("mortar_creeper_keeps_firing", 500, ArmsRaceTests::mortarCreeperKeepsFiring),
             new TestSpec("mortar_creeper_does_not_despawn", 20, ArmsRaceTests::mortarCreeperDoesNotDespawn),
-            new TestSpec("golems_on_roofs_defend_village", ARENA_WIDE, 600, 1, VillageTests::golemsOnRoofsDefendVillage),
+            new TestSpec("golems_on_roofs_defend_village", ARENA_WIDE, 1600, VillageTests::golemsOnRoofsDefendVillage),
+            new TestSpec("golems_survive_siege", ARENA_WIDE, 800, VillageTests::golemsSurviveSiege),
             // Spawning and targeting
             new TestSpec("natural_creepers_become_mortars", 1200, RosterTests::naturalCreepersBecomeMortars),
             new TestSpec("mortar_targets_snow_golem", 300, RosterTests::mortarTargetsSnowGolem),
             new TestSpec("snow_golem_guns_down_zombie", 400, RosterTests::snowGolemGunsDownZombie),
-            new TestSpec("snow_golem_prefers_shells", 200, 3, RosterTests::snowGolemPrefersShells),
-            new TestSpec("elevated_mortar_vs_roof_golems", ARENA_LONG, 600, 1, ArmsRaceTests::elevatedMortarVsRoofGolems),
+            new TestSpec("snow_golem_prefers_shells", 700, RosterTests::snowGolemPrefersShells),
+            // Shell fuzes
+            new TestSpec("proximity_fuze_air_bursts_over_villager", 200, FuzeTests::proximityFuzeAirBurstsOverVillager),
+            new TestSpec("late_intercept_hurts_golem", 20, FuzeTests::lateInterceptHurtsGolem),
+            new TestSpec("high_intercept_is_harmless", 20, FuzeTests::highInterceptIsHarmless),
+            new TestSpec("elevated_mortar_vs_roof_golems", ARENA_LONG, 1600, ArmsRaceTests::elevatedMortarVsRoofGolems),
             // C1 carrying and throwing creepers
             new TestSpec("player_throws_creeper", 200, CarryTests::playerThrowsCreeper),
             new TestSpec("held_creeper_keeps_its_data", 20, CarryTests::heldCreeperKeepsItsData),
@@ -71,12 +75,16 @@ public final class ModGameTests {
             new TestSpec("cat_stops_mortar_firing", 140, CatTests::catStopsMortarFiring));
 
     private static final String MEASURE_CIWS = "measure_ciws";
+    private static final String MEASURE_VILLAGE = "measure_village";
+    private static final String MEASURE_SIEGE = "measure_siege";
 
     static {
         for (TestSpec spec : TESTS) {
             FUNCTIONS.register(spec.name(), () -> spec.body());
         }
         FUNCTIONS.register(MEASURE_CIWS, () -> ArmsRaceTests::measureCiws);
+        FUNCTIONS.register(MEASURE_VILLAGE, () -> VillageTests::measureVillage);
+        FUNCTIONS.register(MEASURE_SIEGE, () -> VillageTests::measureSiege);
     }
 
     private ModGameTests() {
@@ -92,21 +100,28 @@ public final class ModGameTests {
         // AI ranges (a golem once threw its cat at the neighbouring test's creeper). One environment
         // per test makes each its own batch, so they run one at a time.
         for (TestSpec spec : TESTS) {
-            register(event, spec.name(), event.registerEnvironment(id("solo/" + spec.name())), spec.structure(), spec.maxTicks(),
-                    spec.maxAttempts());
+            register(event, spec.name(), event.registerEnvironment(id("solo/" + spec.name())), spec.structure(), spec.maxTicks());
         }
         // Balance measurement: only with MOBARMSRACE_MEASURE=1, in its own environment (= its own
         // batch) so the config values it changes never affect the regular tests.
-        if ("1".equals(System.getenv("MOBARMSRACE_MEASURE"))) {
+        // MOBARMSRACE_MEASURE=siege runs only the siege.
+        String measure = System.getenv("MOBARMSRACE_MEASURE");
+        if ("1".equals(measure)) {
             register(event, MEASURE_CIWS, event.registerEnvironment(id("measure/ciws")), ARENA_LONG,
-                    ArmsRaceTests.MEASURE_MAX_TICKS, 1);
+                    ArmsRaceTests.MEASURE_MAX_TICKS);
+            register(event, MEASURE_VILLAGE, event.registerEnvironment(id("measure/village")), ARENA_WIDE,
+                    VillageTests.MEASURE_MAX_TICKS);
+        }
+        if ("1".equals(measure) || "siege".equals(measure)) {
+            register(event, MEASURE_SIEGE, event.registerEnvironment(id("measure/siege")), ARENA_WIDE,
+                    VillageTests.SIEGE_MAX_TICKS);
         }
     }
 
     private static void register(RegisterGameTestsEvent event, String name, Holder<TestEnvironmentDefinition<?>> environment,
-                                 Identifier structure, int maxTicks, int maxAttempts) {
+                                 Identifier structure, int maxTicks) {
         TestData<Holder<TestEnvironmentDefinition<?>>> data = new TestData<>(
-                environment, structure, maxTicks, 0, true, Rotation.NONE, false, maxAttempts, 1, true, 0);
+                environment, structure, maxTicks, 0, true, Rotation.NONE, false, 1, 1, true, 0);
         event.registerTest(id(name), new FunctionGameTestInstance(ResourceKey.create(Registries.TEST_FUNCTION, id(name)), data));
     }
 

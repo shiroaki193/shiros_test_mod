@@ -42,6 +42,11 @@ public class Config {
             .comment("Explosion power of a shell on impact (a creeper is 3). Block damage follows the mobGriefing rule.")
             .defineInRange("shellExplosionPower", 2.0, 0.0, 8.0);
 
+    public static final ModConfigSpec.DoubleValue SHELL_PROXIMITY_FUZE = BUILDER
+            .comment("Proximity fuze: a descending shell air-bursts once a villager, golem or player is this close. 0 = impact fuze only.",
+                    "Shells shot down by snow golems also detonate, so a late intercept still hurts whatever is nearby.")
+            .defineInRange("proximityFuze", 3.0, 0.0, 8.0);
+
     static {
         BUILDER.pop().push("snowGolemCiws");
     }
@@ -58,18 +63,34 @@ public class Config {
             .comment("Damage per interceptor snowball against hostile mobs (vanilla snowballs deal 0; a zombie has 20 health).")
             .defineInRange("antiMobDamage", 2.0, 0.0, 20.0);
 
+    public static final ModConfigSpec.DoubleValue CIWS_GOLEM_HEALTH = BUILDER
+            .comment("Max health of snow golems (vanilla 4). A shell bursting next to a golem deals ~5, so with vanilla health",
+                    "every shell that gets through kills a golem and the air defence collapses within a salvo or two.")
+            .defineInRange("golemHealth", 4.0, 1.0, 100.0);
+
     public static final ModConfigSpec.IntValue CIWS_POST_RADIUS = BUILDER
             .comment("Snow golems keep within this many blocks of where they were placed, so they stay next to what they guard",
                     "(they only defend shells landing within protectRadius of themselves). 0 = wander freely like vanilla.")
             .defineInRange("postRadius", 6, 0, 64);
 
-    public static final ModConfigSpec.DoubleValue CIWS_DETECT_RANGE = BUILDER
-            .comment("Range at which a snow golem starts tracking shells.")
-            .defineInRange("detectRange", 64.0, 8.0, 128.0);
+    public static final ModConfigSpec.IntValue CIWS_ENGAGE_TICKS = BUILDER
+            .comment("Golems open fire on a descending shell once it is predicted to land within this many ticks (60 = 3 s).")
+            .defineInRange("engageTicks", 60, 5, 200);
 
-    public static final ModConfigSpec.DoubleValue CIWS_ENGAGE_RANGE = BUILDER
-            .comment("Terminal-phase range: the golem only fires at descending shells this close.")
-            .defineInRange("engageRange", 44.0, 4.0, 64.0);
+    public static final ModConfigSpec.IntValue CIWS_CEASE_FIRE_TICKS = BUILDER
+            .comment("Golems stop firing at a shell that will land within this many ticks: too close and fast to track.",
+                    "Snowballs already in the air can still hit. Keeps intercepts high and lets some shells through.")
+            .defineInRange("ceaseFireTicks", 27, 0, 100);
+
+    public static final ModConfigSpec.DoubleValue CIWS_SELF_DEFENSE_RADIUS = BUILDER
+            .comment("Last-ditch self-defence: shells predicted to land this close to the golem itself ignore the cease-fire",
+                    "window (4 = the blast radius of a power 2 shell). Without it, every shell that gets through is one diving",
+                    "at a golem, and the air defence collapses one golem at a time.")
+            .defineInRange("selfDefenseRadius", 4.0, 0.0, 64.0);
+
+    public static final ModConfigSpec.DoubleValue CIWS_GUN_RANGE = BUILDER
+            .comment("Farthest a golem shoots at a shell (snowballs need ~0.25 s per 16 blocks, and miss more with distance).")
+            .defineInRange("gunRange", 96.0, 8.0, 128.0);
 
     public static final ModConfigSpec.DoubleValue CIWS_PROTECT_RADIUS = BUILDER
             .comment("Only shells predicted to land within this radius of the golem are engaged.")
@@ -83,10 +104,20 @@ public class Config {
             .comment("Interceptor snowball speed in blocks/tick (flies straight, no gravity).")
             .defineInRange("bulletSpeed", 4.0, 1.0, 8.0);
 
-    public static final ModConfigSpec.DoubleValue CIWS_SPREAD = BUILDER
-            .comment("Aim spread in degrees. Wider spreads send more snowballs into nearby roofs and trees in a village:",
-                    "in the village regression test 10 stops every shell, 18 lets roughly 1 in 12 through.")
-            .defineInRange("spreadDegrees", 10.0, 0.0, 30.0);
+    public static final ModConfigSpec.DoubleValue CIWS_AIM_ERROR_START = BUILDER
+            .comment("Fire control: aim error in degrees right after a golem picks up a shell. It shrinks while the golem",
+                    "keeps tracking that shell, down to aimErrorSettled after trackingTicks. Early tracers visibly walk onto the shell.")
+            .defineInRange("aimErrorStart", 20.0, 0.0, 45.0);
+
+    public static final ModConfigSpec.IntValue CIWS_TRACKING_TICKS = BUILDER
+            .comment("Ticks of tracking one shell before the aim error settles at aimErrorSettled.")
+            .defineInRange("trackingTicks", 40, 0, 200);
+
+    public static final ModConfigSpec.DoubleValue CIWS_AIM_ERROR_SETTLED = BUILDER
+            .comment("Aim error in degrees once a shell has been tracked for trackingTicks (the best a golem gets).",
+                    "With the defaults two golems on roofs stop ~70% of salvos from a hill 90 blocks off; slow short-range lobs",
+                    "(40 blocks) nearly all; shells aimed at a golem itself a bit less.")
+            .defineInRange("aimErrorSettled", 6.0, 0.0, 30.0);
 
     static {
         BUILDER.pop().push("ironGolemCatThrow");

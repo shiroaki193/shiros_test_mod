@@ -63,9 +63,19 @@ public class MortarCreeper extends Creeper {
         // Indirect fire: targets do not need to be in line of sight.
         this.targetSelector.addGoal(1, new HurtByTargetGoal(this));
         // The village first: villagers and both golem kinds (knocking out snow golems opens the air defence).
-        this.targetSelector.addGoal(2, new NearestAttackableTargetGoal<>(this, LivingEntity.class, 10, false, false,
-                (target, level) -> isVillageTarget(target)));
-        this.targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Player.class, false));
+        this.targetSelector.addGoal(2, new IndirectFireTargetGoal<>(this, LivingEntity.class, (target, level) -> isVillageTarget(target)));
+        this.targetSelector.addGoal(3, new IndirectFireTargetGoal<>(this, Player.class, null));
+    }
+
+    /**
+     * Vanilla target goals only pick targets in line of sight (even with mustSee off, which only
+     * governs keeping a target), so a mortar behind a ridge or a parapet never acquired one.
+     */
+    private static final class IndirectFireTargetGoal<T extends LivingEntity> extends NearestAttackableTargetGoal<T> {
+        IndirectFireTargetGoal(MortarCreeper mob, Class<T> type, net.minecraft.world.entity.ai.targeting.TargetingConditions.@org.jspecify.annotations.Nullable Selector selector) {
+            super(mob, type, 10, false, false, selector);
+            this.targetConditions.ignoreLineOfSight();
+        }
     }
 
     public static boolean isVillageTarget(LivingEntity target) {

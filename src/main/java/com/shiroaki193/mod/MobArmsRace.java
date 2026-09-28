@@ -13,6 +13,10 @@ import com.shiroaki193.mod.registry.ModEntities;
 import com.shiroaki193.mod.registry.ModItems;
 import com.shiroaki193.mod.registry.ModParticles;
 
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.animal.feline.Cat;
 import net.minecraft.world.entity.animal.golem.IronGolem;
 import net.minecraft.world.entity.animal.golem.SnowGolem;
@@ -65,6 +69,7 @@ public class MobArmsRace {
         }
         if (event.getEntity() instanceof SnowGolem golem) {
             golem.goalSelector.addGoal(0, new InterceptShellGoal(golem));
+            applyGolemHealth(golem);
             // The first place a golem shows up becomes its post (saved with the golem, so it sticks).
             int post = Config.CIWS_POST_RADIUS.get();
             if (post > 0 && !golem.hasHome()) {
@@ -74,6 +79,28 @@ public class MobArmsRace {
             golem.goalSelector.addGoal(1, new ThrowCatGoal(golem));
         } else if (event.getEntity() instanceof Cat cat && cat.entityTags().contains(ThrowCatGoal.TAG_AIRBORNE)) {
             ThrowCatGoal.release(cat);
+        }
+    }
+
+    private static final Identifier GOLEM_HEALTH = Identifier.fromNamespaceAndPath(MODID, "ciws_health");
+
+    /**
+     * Raises the golem's max health to the configured value. The modifier is permanent (saved with
+     * the golem) so a reloaded golem keeps its health; it is re-applied on every join to follow
+     * config changes. A golem getting it for the first time starts at full health.
+     */
+    private static void applyGolemHealth(SnowGolem golem) {
+        AttributeInstance maxHealth = golem.getAttribute(Attributes.MAX_HEALTH);
+        if (maxHealth == null) {
+            return;
+        }
+        boolean first = !maxHealth.hasModifier(GOLEM_HEALTH);
+        double bonus = Config.CIWS_GOLEM_HEALTH.get() - maxHealth.getBaseValue();
+        maxHealth.addOrReplacePermanentModifier(new AttributeModifier(GOLEM_HEALTH, bonus, AttributeModifier.Operation.ADD_VALUE));
+        if (first) {
+            golem.setHealth(golem.getMaxHealth());
+        } else if (golem.getHealth() > golem.getMaxHealth()) {
+            golem.setHealth(golem.getMaxHealth());
         }
     }
 }

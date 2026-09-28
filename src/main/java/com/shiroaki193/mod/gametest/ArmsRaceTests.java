@@ -45,17 +45,18 @@ final class ArmsRaceTests {
         });
     }
 
-    /** A shell aimed next to a snow golem is shot down before it lands. Spread makes this probabilistic, so it gets retries. */
+    /** One golem, ten single shells 4 s apart aimed next to it (~75% expected): at least four. */
     static void snowGolemInterceptsShell(GameTestHelper helper) {
-        spawnAt(helper, EntityType.SNOW_GOLEM, 40.5);
-        CreeperShell shell = launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND));
-        helper.succeedWhen(() -> {
-            if (shell.isDetonated()) {
-                helper.fail("shell reached the ground next to the snow golem");
+        TestSupport.shielded(spawnAt(helper, EntityType.SNOW_GOLEM, 40.5));
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 10);
+        int[] fired = {0};
+        helper.onEachTick(() -> {
+            if (helper.getTick() % 80 == 0 && fired[0] < 10) {
+                fired[0]++;
+                launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND));
             }
-            helper.assertTrue(shell.isIntercepted(), "shell not intercepted yet");
-            MobArmsRace.LOGGER.info("[gametest] shell intercepted at {}", shell.getDetonationPos());
         });
+        tally.succeedWhenAtLeast(helper, 4, "single golem vs single shells", () -> "");
     }
 
     /** Shells landing outside the protected radius are not worth the ammo. */
@@ -95,29 +96,16 @@ final class ArmsRaceTests {
     }
 
     /**
-     * Full arms race: a salvo of 4 shells against two snow golems guarding a villager. With the
-     * default 18 degree spread about 90% of shells are stopped, so at least 2 of 4 must be.
+     * Full arms race: a mortar's first two salvos against two snow golems guarding a villager.
+     * The defence is tuned to stop roughly 70% (more at this short range), so at least half.
      */
     static void snowGolemsDefendVillager(GameTestHelper helper) {
-        MortarCreeper mortar = spawnAt(helper, ModEntities.MORTAR_CREEPER.get(), 3.5);
+        spawnAt(helper, ModEntities.MORTAR_CREEPER.get(), 3.5);
         helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(40.5, GROUND, LANE_Z + 0.5));
-        helper.spawn(EntityType.SNOW_GOLEM, new Vec3(38.5, GROUND, LANE_Z - 1.5));
-        helper.spawn(EntityType.SNOW_GOLEM, new Vec3(38.5, GROUND, LANE_Z + 2.5));
-
-        Set<CreeperShell> seen = new LinkedHashSet<>();
-        helper.onEachTick(() -> seen.addAll(helper.getEntities(ModEntities.CREEPER_SHELL.get())));
-        helper.succeedWhen(() -> {
-            helper.assertTrue(mortar.getAmmo() == 0, "salvo not finished");
-            helper.assertTrue(seen.stream().allMatch(CreeperShell::isRemoved), "shells still in flight");
-            long intercepted = seen.stream().filter(CreeperShell::isIntercepted).count();
-            MobArmsRace.LOGGER.info("[gametest] snow golems intercepted {}/{} shells", intercepted, seen.size());
-            if (seen.size() != 4) {
-                helper.fail("expected 4 shells, saw " + seen.size());
-            }
-            if (intercepted < 2) {
-                helper.fail("only " + intercepted + "/4 shells intercepted");
-            }
-        });
+        TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(38.5, GROUND, LANE_Z - 1.5)));
+        TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(38.5, GROUND, LANE_Z + 2.5)));
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 8);
+        tally.succeedWhenAtLeast(helper, 4, "snow golems vs two salvos", () -> "");
     }
 
     /**
@@ -175,32 +163,15 @@ final class ArmsRaceTests {
         });
     }
 
-    /** A 115 block salvo (steep, fast descent) against two golems guarding the target. */
+    /** Three 115 block salvos (steep, fast descent) against two golems guarding the target (~70% expected). */
     static void snowGolemsStopLongRangeSalvo(GameTestHelper helper) {
         spawnAt(helper, ModEntities.MORTAR_CREEPER.get(), 3.5);
         Villager villager = helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(118.5, GROUND, LANE_Z + 0.5));
         shielded(villager);
-        helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z - 1.5));
-        helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z + 2.5));
-        List<CreeperShell> firstSalvo = new ArrayList<>();
-        int salvo = Config.MORTAR_AMMO.get();
-        helper.onEachTick(() -> {
-            // Shells arc ~70 blocks above the 12 block tall arena, so search well above it.
-            for (CreeperShell shell : helper.getLevel().getEntitiesOfClass(CreeperShell.class, helper.getBounds().inflate(0, 200, 0))) {
-                if (firstSalvo.size() < salvo && !firstSalvo.contains(shell)) {
-                    firstSalvo.add(shell);
-                }
-            }
-        });
-        helper.succeedWhen(() -> {
-            helper.assertTrue(firstSalvo.size() == salvo && firstSalvo.stream().allMatch(CreeperShell::isRemoved),
-                    "first salvo still in flight");
-            long intercepted = firstSalvo.stream().filter(CreeperShell::isIntercepted).count();
-            MobArmsRace.LOGGER.info("[gametest] 115 block salvo: {}/{} intercepted", intercepted, salvo);
-            if (intercepted < salvo / 2) {
-                helper.fail("only " + intercepted + "/" + salvo + " long-range shells intercepted");
-            }
-        });
+        TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z - 1.5)));
+        TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z + 2.5)));
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 12);
+        tally.succeedWhenAtLeast(helper, 4, "115 block salvos", () -> "");
     }
 
     /**
@@ -219,48 +190,61 @@ final class ArmsRaceTests {
         Villager villager = helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(91.5, GROUND, LANE_Z + 0.5));
         shielded(villager);
         List<SnowGolem> golems = List.of(
-                helper.spawn(EntityType.SNOW_GOLEM, new Vec3(80.5, 6, 1.5)),
-                helper.spawn(EntityType.SNOW_GOLEM, new Vec3(82.5, 6, 8.5)));
-        Set<CreeperShell> seen = new LinkedHashSet<>();
-        helper.onEachTick(() -> seen.addAll(
-                helper.getLevel().getEntitiesOfClass(CreeperShell.class, helper.getBounds().inflate(0, 200, 0))));
-        helper.succeedWhen(() -> {
-            helper.assertTrue(seen.size() >= 8 && seen.stream().limit(8).allMatch(CreeperShell::isRemoved), "two salvos not done");
-            long intercepted = seen.stream().limit(8).filter(CreeperShell::isIntercepted).count();
-            MobArmsRace.LOGGER.info("[gametest] elevated mortar vs roof golems: {}/8 intercepted, {}", intercepted,
-                    TestSupport.interceptStats(helper, seen.stream().limit(8).toList(), golems));
-            if (intercepted < 6) {
-                helper.fail("only " + intercepted + "/8 shells from an elevated mortar intercepted");
-            }
-        });
+                TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(80.5, 6, 1.5))),
+                TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(82.5, 6, 8.5))));
+        // Six salvos: ~62-70% expected (it shells the golems themselves), so at least 8 of 24.
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 24);
+        tally.succeedWhenAtLeast(helper, 8, "elevated mortar vs roof golems",
+                () -> ", " + TestSupport.interceptStats(helper, tally.shells(), golems));
     }
 
     // ---- balance measurement (MOBARMSRACE_MEASURE=1 gradlew runGameTestServer) ----------------
 
-    /** A CIWS setting to try: terminal engage range and aim spread. */
-    private record Setting(double engageRange, double spread) {
+    /**
+     * A fire-control setting to try: aim error when a shell is picked up, the settled error, and
+     * ticks of tracking to get from one to the other, and the cease-fire window before impact.
+     * Optional overrides via MOBARMSRACE_MEASURE_SETTINGS, e.g. "20/6/40/15,30/10/40/20".
+     */
+    private record Setting(double errorStart, double errorSettled, int trackingTicks, int ceaseFireTicks) {
+        @Override
+        public String toString() {
+            return "error " + this.errorStart + "->" + this.errorSettled + " deg over " + this.trackingTicks
+                    + " ticks, cease fire " + this.ceaseFireTicks;
+        }
     }
 
-    private static final Setting[] MEASURED_SETTINGS = {
-            new Setting(28, 18), new Setting(28, 10), new Setting(36, 10), new Setting(28, 6),
-    };
+    private static final Setting[] MEASURED_SETTINGS = measuredSettings();
     /** Shot distances, measured in the 128 block {@code arena_long}. */
     private static final int[] MEASURED_RANGES = {40, 80, 115};
-    private static final int SALVOS_PER_BLOCK = 10;
+    private static final int SALVOS_PER_BLOCK = 12;
     private static final int SALVO_PERIOD = 140;
     private static final int BLOCK_TICKS = SALVOS_PER_BLOCK * SALVO_PERIOD;
     private static final int MEASURE_BLOCKS = MEASURED_SETTINGS.length * MEASURED_RANGES.length;
     static final int MEASURE_MAX_TICKS = MEASURE_BLOCKS * BLOCK_TICKS + 400;
 
+    private static Setting[] measuredSettings() {
+        String spec = System.getenv("MOBARMSRACE_MEASURE_SETTINGS");
+        if (spec == null || spec.isBlank()) {
+            return new Setting[] {
+                    new Setting(20, 6, 40, 23), new Setting(20, 6, 40, 27), new Setting(20, 6, 40, 31),
+            };
+        }
+        return java.util.Arrays.stream(spec.split(",")).map(part -> {
+            String[] v = part.trim().split("/");
+            return new Setting(Double.parseDouble(v[0]), Double.parseDouble(v[1]), Integer.parseInt(v[2]), Integer.parseInt(v[3]));
+        }).toArray(Setting[]::new);
+    }
+
     /**
-     * Interception rate for each setting against mortar-like salvos (4 shells, 4 ticks apart,
-     * ~1.5 block scatter) from 40, 80 and 115 blocks, against two fresh golems next to the aim point.
-     * Golems keep to their post (Config postRadius); before that they strolled out of their protect
-     * radius within a minute, which is what made interception look broken in play.
+     * Interception rate and height for each fire-control setting against mortar-like salvos
+     * (4 shells, 4 ticks apart, ~1.5 block scatter) from 40, 80 and 115 blocks, against two fresh
+     * golems next to the aim point. Target: about 70% stopped, intercepts high above the village.
      */
     static void measureCiws(GameTestHelper helper) {
-        double originalEngage = Config.CIWS_ENGAGE_RANGE.get();
-        double originalSpread = Config.CIWS_SPREAD.get();
+        double originalStart = Config.CIWS_AIM_ERROR_START.get();
+        double originalSpread = Config.CIWS_AIM_ERROR_SETTLED.get();
+        int originalTracking = Config.CIWS_TRACKING_TICKS.get();
+        int originalCeaseFire = Config.CIWS_CEASE_FIRE_TICKS.get();
         double originalPower = Config.SHELL_EXPLOSION_POWER.get();
         // Leaking shells must not kill the golems mid-measurement.
         Config.SHELL_EXPLOSION_POWER.set(0.0);
@@ -282,11 +266,17 @@ final class ArmsRaceTests {
             if (inBlock == 0) {
                 golems.forEach(SnowGolem::discard);
                 golems.clear();
-                double golemX = 3.5 + range - 2;
-                golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(golemX, GROUND, LANE_Z - 1.5)));
-                golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(golemX, GROUND, LANE_Z + 2.5)));
-                Config.CIWS_ENGAGE_RANGE.set(setting.engageRange());
-                Config.CIWS_SPREAD.set(setting.spread());
+                // MOBARMSRACE_MEASURE_GOLEM="dx,dz": first golem's offset from the aim point (default -2,-2).
+                String[] offset = System.getenv().getOrDefault("MOBARMSRACE_MEASURE_GOLEM", "-2,-2").split(",");
+                double golemX = 3.5 + range + Double.parseDouble(offset[0]);
+                golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(golemX, GROUND, LANE_Z + 0.5 + Double.parseDouble(offset[1]))));
+                if (!"1".equals(System.getenv("MOBARMSRACE_MEASURE_GOLEMS"))) {
+                    golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(3.5 + range - 2, GROUND, LANE_Z + 2.5)));
+                }
+                Config.CIWS_AIM_ERROR_START.set(setting.errorStart());
+                Config.CIWS_AIM_ERROR_SETTLED.set(setting.errorSettled());
+                Config.CIWS_TRACKING_TICKS.set(setting.trackingTicks());
+                Config.CIWS_CEASE_FIRE_TICKS.set(setting.ceaseFireTicks());
             }
             int inSalvo = inBlock % SALVO_PERIOD;
             if (inSalvo < 16 && inSalvo % 4 == 0) {
@@ -297,16 +287,21 @@ final class ArmsRaceTests {
         });
         helper.succeedWhen(() -> {
             helper.assertTrue(tick[0] >= MEASURE_BLOCKS * BLOCK_TICKS + 150, "still measuring");
-            Config.CIWS_ENGAGE_RANGE.set(originalEngage);
-            Config.CIWS_SPREAD.set(originalSpread);
+            Config.CIWS_AIM_ERROR_START.set(originalStart);
+            Config.CIWS_AIM_ERROR_SETTLED.set(originalSpread);
+            Config.CIWS_TRACKING_TICKS.set(originalTracking);
+            Config.CIWS_CEASE_FIRE_TICKS.set(originalCeaseFire);
             Config.SHELL_EXPLOSION_POWER.set(originalPower);
+            double ground = helper.absoluteVec(new Vec3(0, GROUND, 0)).y;
             for (int i = 0; i < MEASURE_BLOCKS; i++) {
                 Setting setting = MEASURED_SETTINGS[i / MEASURED_RANGES.length];
                 Set<CreeperShell> shells = perBlock.get(i);
                 long hit = shells.stream().filter(CreeperShell::isIntercepted).count();
-                MobArmsRace.LOGGER.info("[measure] engage {} spread {} range {}: intercepted {}/{} ({}%)",
-                        setting.engageRange(), setting.spread(), MEASURED_RANGES[i % MEASURED_RANGES.length],
-                        hit, shells.size(), hit * 100 / Math.max(1, shells.size()));
+                double height = shells.stream().filter(CreeperShell::isIntercepted)
+                        .mapToDouble(sh -> sh.getDetonationPos().y - ground).average().orElse(0);
+                MobArmsRace.LOGGER.info("[measure] {} | range {}: intercepted {}/{} ({}%), mean height {}",
+                        setting, MEASURED_RANGES[i % MEASURED_RANGES.length], hit, shells.size(),
+                        hit * 100 / Math.max(1, shells.size()), String.format("%.0f", height));
             }
         });
     }

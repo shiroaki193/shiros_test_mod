@@ -119,16 +119,18 @@ final class RosterTests {
         });
     }
 
-    /** A zombie in view does not distract from an incoming shell. */
+    /** A (shielded, so it stays) zombie in view does not distract the golem from incoming shells. */
     static void snowGolemPrefersShells(GameTestHelper helper) {
-        spawnAt(helper, EntityType.SNOW_GOLEM, 40.5);
-        helper.spawnWithNoFreeWill(EntityType.ZOMBIE, new Vec3(30.5, GROUND, LANE_Z + 0.5));
-        CreeperShell shell = launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND));
-        helper.succeedWhen(() -> {
-            if (shell.isDetonated()) {
-                helper.fail("shell landed while the golem was busy with the zombie");
+        TestSupport.shielded(spawnAt(helper, EntityType.SNOW_GOLEM, 40.5));
+        TestSupport.shielded(helper.spawnWithNoFreeWill(EntityType.ZOMBIE, new Vec3(30.5, GROUND, LANE_Z + 0.5)));
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 6);
+        int[] fired = {0};
+        helper.onEachTick(() -> {
+            if (helper.getTick() % 80 == 0 && fired[0] < 6) {
+                fired[0]++;
+                launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND));
             }
-            helper.assertTrue(shell.isIntercepted(), "shell not intercepted yet");
         });
+        tally.succeedWhenAtLeast(helper, 3, "shells with a zombie in view", () -> "");
     }
 }

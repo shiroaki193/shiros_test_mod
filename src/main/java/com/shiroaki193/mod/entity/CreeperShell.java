@@ -14,6 +14,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrowableItemProjectile;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -21,7 +22,12 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-/** The "firework + elytra creeper" mortar round. Flies the {@link Ballistics} arc and explodes on impact. */
+/**
+ * The "firework + elytra creeper" mortar round. Flies the {@link Ballistics} arc with two fuzes:
+ * impact (explodes on the first block or mob it hits) and proximity (air-bursts on the way down
+ * next to a villager, golem or player). A shell shot down by a snow golem detonates too, so an
+ * intercept close to the ground still does damage.
+ */
 public class CreeperShell extends ThrowableItemProjectile {
     private static final int TRAIL_PARTICLES_PER_TICK = 8;
     private static final double RENDER_DISTANCE = 256.0;
@@ -29,6 +35,7 @@ public class CreeperShell extends ThrowableItemProjectile {
     /** Game time of this shell's last move, see {@link #hasMovedThisTick()}. */
     private long lastMoveTime = Long.MIN_VALUE;
     private boolean detonated;
+    private boolean proximityBurst;
     private boolean intercepted;
     private Vec3 detonationPos = Vec3.ZERO;
 
@@ -82,7 +89,29 @@ public class CreeperShell extends ThrowableItemProjectile {
         this.lastMoveTime = this.level().getGameTime();
         if (this.level().isClientSide() && this.isAlive()) {
             spawnTrail();
+        } else if (this.level() instanceof ServerLevel level && this.isAlive() && this.proximityFuzeTriggered()) {
+            this.proximityBurst = true;
+            this.detonate(level, this.position());
         }
+    }
+
+    /**
+     * Armed only on the way down, so the launching mortar and anything near it are safe. Measured
+     * to the target's feet on purpose: vanilla explosion damage reaches 2 x power blocks from the
+     * feet (4 at the default power 2), so bursting further out, e.g. 3 blocks above a villager's
+     * head, would hurt nothing.
+     */
+    private boolean proximityFuzeTriggered() {
+        double radius = Config.SHELL_PROXIMITY_FUZE.get();
+        if (radius <= 0 || this.getDeltaMovement().y >= 0) {
+            return false;
+        }
+        return !this.level().getEntitiesOfClass(LivingEntity.class, this.getBoundingBox().inflate(radius),
+                e -> e.isAlive() && !e.isSpectator() && isFuzeTarget(e) && e.distanceToSqr(this) <= radius * radius).isEmpty();
+    }
+
+    private static boolean isFuzeTarget(LivingEntity entity) {
+        return MortarCreeper.isVillageTarget(entity) || entity instanceof Player;
     }
 
     private void spawnTrail() {
@@ -111,17 +140,22 @@ public class CreeperShell extends ThrowableItemProjectile {
     protected void onHit(HitResult hitResult) {
         super.onHit(hitResult);
         if (this.level() instanceof ServerLevel serverLevel && !this.isRemoved()) {
-            this.detonated = true;
-            this.detonationPos = hitResult.getLocation();
-            float power = Config.SHELL_EXPLOSION_POWER.get().floatValue();
-            if (power > 0) {
-                serverLevel.explode(this, this.getX(), this.getY(), this.getZ(), power, Level.ExplosionInteraction.MOB);
-            }
-            this.discard();
+            this.detonate(serverLevel, hitResult.getLocation());
         }
     }
 
-    /** Shot down mid-air: an air burst with no damage to blocks or mobs. */
+    /** Impact or proximity fuze: the shell reached its target. */
+    private void detonate(ServerLevel level, Vec3 at) {
+        this.detonated = true;
+        this.detonationPos = at;
+        this.explodeWarhead(level);
+        this.discard();
+    }
+
+    /**
+     * Shot down mid-air. The warhead still goes off: high up that is a harmless burst, but a late
+     * intercept close to a golem or a roof hurts. The white firework shows it was shot down.
+     */
     public void intercept() {
         if (!(this.level() instanceof ServerLevel serverLevel) || this.isRemoved()) {
             return;
@@ -132,11 +166,25 @@ public class CreeperShell extends ThrowableItemProjectile {
         serverLevel.sendParticles(ParticleTypes.CLOUD, true, true, this.getX(), this.getY(), this.getZ(), 8, 0.3, 0.3, 0.3, 0.02);
         serverLevel.playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.FIREWORK_ROCKET_BLAST,
                 SoundSource.HOSTILE, 3.0F, 0.9F + this.random.nextFloat() * 0.2F);
+        this.explodeWarhead(serverLevel);
         this.discard();
     }
 
+    private void explodeWarhead(ServerLevel level) {
+        float power = Config.SHELL_EXPLOSION_POWER.get().floatValue();
+        if (power > 0) {
+            level.explode(this, this.getX(), this.getY(), this.getZ(), power, Level.ExplosionInteraction.MOB);
+        }
+    }
+
+    /** Reached a target: impact or proximity burst (not shot down). */
     public boolean isDetonated() {
         return this.detonated;
+    }
+
+    /** Detonated by the proximity fuze rather than on impact. */
+    public boolean isProximityBurst() {
+        return this.proximityBurst;
     }
 
     public boolean isIntercepted() {

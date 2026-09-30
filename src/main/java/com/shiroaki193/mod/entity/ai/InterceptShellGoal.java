@@ -9,6 +9,8 @@ import java.util.Set;
 
 import com.shiroaki193.mod.Config;
 import com.shiroaki193.mod.ballistics.Ballistics;
+import com.shiroaki193.mod.entity.BallisticProjectile;
+import com.shiroaki193.mod.entity.CreeperBomblet;
 import com.shiroaki193.mod.entity.CreeperShell;
 import com.shiroaki193.mod.entity.InterceptorSnowball;
 
@@ -29,8 +31,10 @@ import org.jspecify.annotations.Nullable;
  * within {@code engageTicks}, the golem hoses it with fast interceptor snowballs aimed at
  * the predicted meeting point. Fire control is not perfect: aim error starts at
  * {@code aimErrorStart} when a golem picks up a shell and shrinks to {@code aimErrorSettled} as it
- * keeps tracking it, so early tracers walk onto the shell. With nothing incoming, the same rapid
- * fire goes at hostile mobs nearby (replacing the vanilla snowball throw).
+ * keeps tracking it, so early tracers walk onto the shell. Only while no whole shell is coming
+ * does the golem turn on bomblets (pieces of shells shot down), the one landing nearest to itself
+ * first. With nothing incoming, the same rapid fire goes at hostile mobs nearby (replacing the
+ * vanilla snowball throw).
  */
 public class InterceptShellGoal extends Goal {
     private static final int SCAN_INTERVAL = 2;
@@ -38,9 +42,9 @@ public class InterceptShellGoal extends Goal {
     private static final double BULLET_DRAG = 0.99;
 
     private final SnowGolem golem;
-    /** What the golem is looking at: the most urgent shell, or else the nearest hostile mob. */
+    /** What the golem is looking at: the most urgent shell, else the nearest-landing bomblet, else the nearest hostile mob. */
     private @Nullable Entity lookTarget;
-    /** Shell id -> game time this golem started tracking it (drives the aim error). */
+    /** Shell or bomblet id -> game time this golem started tracking it (drives the aim error). */
     private final Map<Integer, Long> trackedSince = new HashMap<>();
     private int fireCooldown;
     private int scanCooldown;
@@ -85,7 +89,44 @@ public class InterceptShellGoal extends Goal {
 
     private @Nullable Entity findLookTarget() {
         CreeperShell shell = this.nearestThreat();
-        return shell != null ? shell : this.nearestHostile();
+        if (shell != null) {
+            return shell;
+        }
+        CreeperBomblet bomblet = this.nearestLandingBomblet();
+        return bomblet != null ? bomblet : this.nearestHostile();
+    }
+
+    private @Nullable CreeperBomblet nearestLandingBomblet() {
+        double range = Config.CIWS_GUN_RANGE.get();
+        CreeperBomblet best = null;
+        double bestMiss = Double.MAX_VALUE;
+        for (CreeperBomblet bomblet : this.golem.level().getEntitiesOfClass(CreeperBomblet.class,
+                this.golem.getBoundingBox().inflate(range), Entity::isAlive)) {
+            double miss = this.bombletMiss(bomblet);
+            if (miss < bestMiss) {
+                best = bomblet;
+                bestMiss = miss;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * How far from the golem a bomblet will land, if it is worth shooting at (in gun range and
+     * landing inside the protected radius); otherwise {@link Double#MAX_VALUE}. Bomblets fall for
+     * only a second or two, so there is no engage or cease-fire window.
+     */
+    private double bombletMiss(CreeperBomblet bomblet) {
+        double gunRange = Config.CIWS_GUN_RANGE.get();
+        if (bomblet.distanceToSqr(this.golem) > gunRange * gunRange) {
+            return Double.MAX_VALUE;
+        }
+        Ballistics.Landing landing = Ballistics.landing(bomblet.ballisticState(), this.golem.getY());
+        if (landing == null) {
+            return Double.MAX_VALUE;
+        }
+        double miss = landing.horizontalDistanceFrom(this.golem.getX(), this.golem.getZ());
+        return miss <= Config.CIWS_PROTECT_RADIUS.get() ? miss : Double.MAX_VALUE;
     }
 
     private @Nullable CreeperShell nearestThreat() {
@@ -118,8 +159,8 @@ public class InterceptShellGoal extends Goal {
         return miss <= Config.CIWS_PROTECT_RADIUS.get();
     }
 
-    /** Current aim error for this shell: large when just picked up, settling as tracking goes on. */
-    private float aimError(CreeperShell shell, long now) {
+    /** Current aim error for this shell or bomblet: large when just picked up, settling as tracking goes on. */
+    private float aimError(BallisticProjectile shell, long now) {
         long tracked = now - this.trackedSince.computeIfAbsent(shell.getId(), id -> now);
         double settled = Config.CIWS_AIM_ERROR_SETTLED.get();
         double start = Math.max(settled, Config.CIWS_AIM_ERROR_START.get());
@@ -153,10 +194,10 @@ public class InterceptShellGoal extends Goal {
         if (!(this.golem.level() instanceof ServerLevel level)) {
             return;
         }
-        Solution shot = this.bestShellSolution(level);
+        Solution shot = this.bestSolution(level);
         if (shot != null) {
             this.fire(level, shot.aim(), shot.aimError());
-        } else if (!(look instanceof CreeperShell)) {
+        } else if (!(look instanceof BallisticProjectile)) {
             Vec3 aim = this.hostileAim(level, look);
             if (aim != null) {
                 this.fire(level, aim, Config.CIWS_AIM_ERROR_SETTLED.get().floatValue());
@@ -164,49 +205,66 @@ public class InterceptShellGoal extends Goal {
         }
     }
 
-    /** A firing solution: where to aim, with what error, and how soon the shell would land otherwise. */
-    private record Solution(Vec3 aim, float aimError, double landingTicks) {
+    /** A firing solution: where to aim, with what error, and its priority (lower goes first). */
+    private record Solution(Vec3 aim, float aimError, double priority) {
     }
 
     /**
-     * Aim point on the most urgent shell that has a clear line of fire. The nearest shell is often
-     * already below the rooftops; shooting at it just puts snowballs into roofs and trees (seen in
-     * the user's village), so skip blocked solutions and take the next shell instead.
+     * Whole shells first, the one landing soonest; bomblets only when no shell is a threat at all,
+     * the one landing nearest to the golem first. Targets without a clear line of fire are skipped:
+     * the nearest shell is often already below the rooftops, and shooting at it just puts snowballs
+     * into roofs and trees (seen in the user's village).
      */
-    private @Nullable Solution bestShellSolution(ServerLevel level) {
-        double speed = Config.CIWS_BULLET_SPEED.get();
-        Vec3 muzzle = this.golem.getEyePosition();
+    private @Nullable Solution bestSolution(ServerLevel level) {
         long now = level.getGameTime();
-        Solution best = null;
         double range = Config.CIWS_GUN_RANGE.get();
-        Set<Integer> threats = new HashSet<>();
+        Set<Integer> tracked = new HashSet<>();
+        Solution best = null;
         for (CreeperShell shell : level.getEntitiesOfClass(CreeperShell.class, this.golem.getBoundingBox().inflate(range), Entity::isAlive)) {
             if (!this.isThreat(shell)) {
                 continue;
             }
-            threats.add(shell.getId());
-            float error = this.aimError(shell, now);
-            // The bullet is added mid-tick, so it first moves next tick; line the shell up with that.
-            Ballistics.State shellNow = shell.ballisticState();
-            if (!shell.hasMovedThisTick()) {
-                shellNow = shellNow.step();
-            }
-            Ballistics.Intercept lead = Ballistics.lead(shellNow, muzzle.x, muzzle.y, muzzle.z, speed, BULLET_DRAG, MAX_LEAD_TICKS);
-            if (lead == null) {
-                continue;
-            }
-            Vec3 aim = new Vec3(lead.x(), lead.y(), lead.z());
-            if (!this.hasClearShot(level, muzzle, aim)) {
-                continue;
-            }
-            Ballistics.Landing landing = Ballistics.landing(shellNow, this.golem.getY());
-            double landingTicks = landing == null ? Double.MAX_VALUE : landing.ticks();
-            if (best == null || landingTicks < best.landingTicks()) {
-                best = new Solution(aim, error, landingTicks);
+            tracked.add(shell.getId());
+            Ballistics.Landing landing = Ballistics.landing(this.nextState(shell), this.golem.getY());
+            best = this.better(best, this.solve(level, shell, now, landing == null ? Double.MAX_VALUE : landing.ticks()));
+        }
+        if (tracked.isEmpty()) {
+            for (CreeperBomblet bomblet : level.getEntitiesOfClass(CreeperBomblet.class, this.golem.getBoundingBox().inflate(range), Entity::isAlive)) {
+                double miss = this.bombletMiss(bomblet);
+                if (miss == Double.MAX_VALUE) {
+                    continue;
+                }
+                tracked.add(bomblet.getId());
+                best = this.better(best, this.solve(level, bomblet, now, miss));
             }
         }
-        this.trackedSince.keySet().retainAll(threats);
+        this.trackedSince.keySet().retainAll(tracked);
         return best;
+    }
+
+    private @Nullable Solution better(@Nullable Solution a, @Nullable Solution b) {
+        if (a == null) {
+            return b;
+        }
+        return b != null && b.priority() < a.priority() ? b : a;
+    }
+
+    /** The bullet is added mid-tick, so it first moves next tick; line the target up with that. */
+    private Ballistics.State nextState(BallisticProjectile target) {
+        Ballistics.State state = target.ballisticState();
+        return target.hasMovedThisTick() ? state : state.step();
+    }
+
+    private @Nullable Solution solve(ServerLevel level, BallisticProjectile target, long now, double priority) {
+        float error = this.aimError(target, now);
+        Vec3 muzzle = this.golem.getEyePosition();
+        Ballistics.Intercept lead = Ballistics.lead(this.nextState(target), muzzle.x, muzzle.y, muzzle.z,
+                Config.CIWS_BULLET_SPEED.get(), BULLET_DRAG, MAX_LEAD_TICKS);
+        if (lead == null) {
+            return null;
+        }
+        Vec3 aim = new Vec3(lead.x(), lead.y(), lead.z());
+        return this.hasClearShot(level, muzzle, aim) ? new Solution(aim, error, priority) : null;
     }
 
     /** Aim at the mob's body, led by its current walking velocity. */

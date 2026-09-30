@@ -22,6 +22,10 @@ public class Config {
             .comment("Ticks to reload a full salvo after the last shell. 0 = no reload: the mortar turns back into a normal creeper.")
             .defineInRange("reloadTicks", 160, 0, 12000);
 
+    public static final ModConfigSpec.IntValue MORTAR_SHELL_LIMIT = BUILDER
+            .comment("A mortar creeper dies after firing this many shells in its life (the count is saved with it). 0 = no limit.")
+            .defineInRange("shellLimit", 10, 0, 10000);
+
     public static final ModConfigSpec.DoubleValue MORTAR_MAX_RANGE = BUILDER
             .comment("Maximum horizontal firing range in blocks.")
             .defineInRange("maxRange", 120.0, 16.0, 120.0);
@@ -41,6 +45,23 @@ public class Config {
     public static final ModConfigSpec.DoubleValue SHELL_EXPLOSION_POWER = BUILDER
             .comment("Explosion power of a shell on impact (a creeper is 3). Block damage follows the mobGriefing rule.")
             .defineInRange("shellExplosionPower", 2.0, 0.0, 8.0);
+
+    public static final ModConfigSpec.DoubleValue FRAGMENT_CHANCE = BUILDER
+            .comment("Chance that a shell shot down by a snow golem breaks into bomblets instead of exploding where it was hit.")
+            .defineInRange("fragmentChance", 0.5, 0.0, 1.0);
+
+    public static final ModConfigSpec.IntValue FRAGMENTS_MIN = BUILDER
+            .comment("Fewest bomblets a shell breaks into.")
+            .defineInRange("fragmentsMin", 2, 1, 16);
+
+    public static final ModConfigSpec.IntValue FRAGMENTS_MAX = BUILDER
+            .comment("Most bomblets a shell breaks into.")
+            .defineInRange("fragmentsMax", 5, 1, 16);
+
+    public static final ModConfigSpec.DoubleValue FRAGMENT_POWER = BUILDER
+            .comment("Explosion power of each bomblet (a shell is shellExplosionPower). Damage reaches 2 x power blocks from",
+                    "a mob's feet: 1.0 = 2 blocks and up to ~15 damage, against 4 blocks and ~29 for a shell.")
+            .defineInRange("fragmentPower", 1.0, 0.0, 8.0);
 
     public static final ModConfigSpec.DoubleValue SHELL_PROXIMITY_FUZE = BUILDER
             .comment("Proximity fuze: a descending shell air-bursts once a villager, golem or player is this close. 0 = impact fuze only.",
@@ -68,19 +89,24 @@ public class Config {
                     "every shell that gets through kills a golem and the air defence collapses within a salvo or two.")
             .defineInRange("golemHealth", 4.0, 1.0, 100.0);
 
+    public static final ModConfigSpec.BooleanValue CIWS_WEATHERPROOF = BUILDER
+            .comment("Snow golems take no damage from rain, water or melting in hot biomes (deserts, savannas, the Nether).",
+                    "Real fire, lava, attacks and explosions still hurt them.")
+            .define("weatherproof", true);
+
     public static final ModConfigSpec.IntValue CIWS_POST_RADIUS = BUILDER
             .comment("Snow golems keep within this many blocks of where they were placed, so they stay next to what they guard",
                     "(they only defend shells landing within protectRadius of themselves). 0 = wander freely like vanilla.")
             .defineInRange("postRadius", 6, 0, 64);
 
     public static final ModConfigSpec.IntValue CIWS_ENGAGE_TICKS = BUILDER
-            .comment("Golems open fire on a descending shell once it is predicted to land within this many ticks (60 = 3 s).")
-            .defineInRange("engageTicks", 60, 5, 200);
+            .comment("Golems open fire on a shell once it is predicted to land within this many ticks (80 = 4 s).")
+            .defineInRange("engageTicks", 80, 5, 200);
 
     public static final ModConfigSpec.IntValue CIWS_CEASE_FIRE_TICKS = BUILDER
             .comment("Golems stop firing at a shell that will land within this many ticks: too close and fast to track.",
                     "Snowballs already in the air can still hit. Keeps intercepts high and lets some shells through.")
-            .defineInRange("ceaseFireTicks", 27, 0, 100);
+            .defineInRange("ceaseFireTicks", 50, 0, 100);
 
     public static final ModConfigSpec.DoubleValue CIWS_SELF_DEFENSE_RADIUS = BUILDER
             .comment("Last-ditch self-defence: shells predicted to land this close to the golem itself ignore the cease-fire",
@@ -107,17 +133,17 @@ public class Config {
     public static final ModConfigSpec.DoubleValue CIWS_AIM_ERROR_START = BUILDER
             .comment("Fire control: aim error in degrees right after a golem picks up a shell. It shrinks while the golem",
                     "keeps tracking that shell, down to aimErrorSettled after trackingTicks. Early tracers visibly walk onto the shell.")
-            .defineInRange("aimErrorStart", 20.0, 0.0, 45.0);
+            .defineInRange("aimErrorStart", 15.0, 0.0, 45.0);
 
     public static final ModConfigSpec.IntValue CIWS_TRACKING_TICKS = BUILDER
             .comment("Ticks of tracking one shell before the aim error settles at aimErrorSettled.")
-            .defineInRange("trackingTicks", 40, 0, 200);
+            .defineInRange("trackingTicks", 30, 0, 200);
 
     public static final ModConfigSpec.DoubleValue CIWS_AIM_ERROR_SETTLED = BUILDER
             .comment("Aim error in degrees once a shell has been tracked for trackingTicks (the best a golem gets).",
-                    "With the defaults two golems on roofs stop ~70% of salvos from a hill 90 blocks off; slow short-range lobs",
-                    "(40 blocks) nearly all; shells aimed at a golem itself a bit less.")
-            .defineInRange("aimErrorSettled", 6.0, 0.0, 30.0);
+                    "With the defaults two golems on roofs stop ~70-75% of salvos from a hill 90 blocks off, and about half of",
+                    "all shells while still 60+ blocks above the golems.")
+            .defineInRange("aimErrorSettled", 5.0, 0.0, 30.0);
 
     static {
         BUILDER.pop().push("ironGolemCatThrow");
@@ -147,5 +173,39 @@ public class Config {
         BUILDER.pop();
     }
 
+    /** Bump when changing a balance default, and add the value to {@link #migrate()}. */
+    private static final int BALANCE_REVISION = 2;
+
+    public static final ModConfigSpec.IntValue BALANCE_VERSION = BUILDER
+            .comment("Internal: the balance revision this file was last updated to. Leave it alone.")
+            .defineInRange("balanceVersion", 0, 0, Integer.MAX_VALUE);
+
     static final ModConfigSpec SPEC = BUILDER.build();
+
+    /**
+     * NeoForge keeps a value already written in the file when its default changes, so an existing
+     * config would never pick up rebalanced defaults (1.0.1 users still fired on shells 3 s out).
+     * Files from before a balance revision get those values reset to the new defaults once.
+     */
+    static void migrate() {
+        int from = BALANCE_VERSION.get();
+        if (from >= BALANCE_REVISION) {
+            return;
+        }
+        if (from < 2) {
+            // 1.0.3: engage 4 s out, cease fire 2.5 s before impact, sharper mid-range fire control.
+            reset(CIWS_ENGAGE_TICKS);
+            reset(CIWS_CEASE_FIRE_TICKS);
+            reset(CIWS_AIM_ERROR_START);
+            reset(CIWS_AIM_ERROR_SETTLED);
+            reset(CIWS_TRACKING_TICKS);
+        }
+        BALANCE_VERSION.set(BALANCE_REVISION);
+        SPEC.save();
+        MobArmsRace.LOGGER.info("Updated snow golem fire control in the config to the balance of revision {} (was {})", BALANCE_REVISION, from);
+    }
+
+    private static <T> void reset(ModConfigSpec.ConfigValue<T> value) {
+        value.set(value.getDefault());
+    }
 }

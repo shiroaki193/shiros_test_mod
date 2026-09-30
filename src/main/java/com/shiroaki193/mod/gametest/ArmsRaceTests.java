@@ -48,12 +48,12 @@ final class ArmsRaceTests {
     /** One golem, ten single shells 4 s apart aimed next to it (~75% expected): at least four. */
     static void snowGolemInterceptsShell(GameTestHelper helper) {
         TestSupport.shielded(spawnAt(helper, EntityType.SNOW_GOLEM, 40.5));
-        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 10);
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(10);
         int[] fired = {0};
         helper.onEachTick(() -> {
             if (helper.getTick() % 80 == 0 && fired[0] < 10) {
                 fired[0]++;
-                launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND));
+                tally.add(helper, launch(helper, lane(helper, 2.5, 2.0), lane(helper, 38.5, GROUND)));
             }
         });
         tally.succeedWhenAtLeast(helper, 4, "single golem vs single shells", () -> "");
@@ -142,6 +142,34 @@ final class ArmsRaceTests {
     }
 
     /** Sustained fire: after a salvo the mortar reloads in place and fires again. */
+    /**
+     * A mortar has a limited life: shelling a villager, it dies right after its 10th shell (the
+     * third salvo is cut to two), and no shell comes after that.
+     */
+    static void mortarDiesAfterTenShells(GameTestHelper helper) {
+        int original = Config.MORTAR_SHELL_LIMIT.get();
+        Config.MORTAR_SHELL_LIMIT.set(10);
+        MortarCreeper mortar = spawnAt(helper, ModEntities.MORTAR_CREEPER.get(), 3.5);
+        TestSupport.shielded(helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(40.5, GROUND, LANE_Z + 0.5)));
+        Set<CreeperShell> shells = new LinkedHashSet<>();
+        long[] diedAt = {-1};
+        helper.onEachTick(() -> {
+            shells.addAll(helper.getLevel().getEntitiesOfClass(CreeperShell.class, helper.getBounds().inflate(0, 200, 0)));
+            if (diedAt[0] < 0 && !mortar.isAlive()) {
+                diedAt[0] = helper.getTick();
+            }
+        });
+        helper.succeedWhen(() -> {
+            // Wait a while after the death: no shell may follow.
+            helper.assertTrue(diedAt[0] >= 0 && helper.getTick() > diedAt[0] + 60, "mortar still alive after " + mortar.getShellsFired() + " shells");
+            Config.MORTAR_SHELL_LIMIT.set(original);
+            MobArmsRace.LOGGER.info("[gametest] mortar died at tick {} after {} shells ({} seen)", diedAt[0], mortar.getShellsFired(), shells.size());
+            if (mortar.getShellsFired() != 10 || shells.size() != 10) {
+                helper.fail("mortar fired " + mortar.getShellsFired() + " shells (" + shells.size() + " seen) before dying, expected 10");
+            }
+        });
+    }
+
     static void mortarCreeperKeepsFiring(GameTestHelper helper) {
         MortarCreeper mortar = spawnAt(helper, ModEntities.MORTAR_CREEPER.get(), 3.5);
         Villager villager = helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(40.5, GROUND, LANE_Z + 0.5));
@@ -170,7 +198,7 @@ final class ArmsRaceTests {
         shielded(villager);
         TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z - 1.5)));
         TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(116.5, GROUND, LANE_Z + 2.5)));
-        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 12);
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 12).whenDone(TestSupport.noShellLimit());
         tally.succeedWhenAtLeast(helper, 4, "115 block salvos", () -> "");
     }
 
@@ -193,7 +221,7 @@ final class ArmsRaceTests {
                 TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(80.5, 6, 1.5))),
                 TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(82.5, 6, 8.5))));
         // Six salvos: ~62-70% expected (it shells the golems themselves), so at least 8 of 24.
-        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 24);
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, 24).whenDone(TestSupport.noShellLimit());
         tally.succeedWhenAtLeast(helper, 8, "elevated mortar vs roof golems",
                 () -> ", " + TestSupport.interceptStats(helper, tally.shells(), golems));
     }

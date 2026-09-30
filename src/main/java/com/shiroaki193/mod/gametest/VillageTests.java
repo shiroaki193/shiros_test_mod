@@ -48,7 +48,7 @@ final class VillageTests {
                 TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(90.5, 6, 27.5))));
 
         // Six salvos: ~62-70% expected (the mortar picks the nearest golem as its target), so at least 8 of 24.
-        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, SHELLS);
+        TestSupport.ShellTally tally = new TestSupport.ShellTally(helper, SHELLS).whenDone(TestSupport.noShellLimit());
         tally.succeedWhenAtLeast(helper, 8, "village defence",
                 () -> ", " + TestSupport.interceptStats(helper, tally.shells(), golems));
     }
@@ -79,7 +79,13 @@ final class VillageTests {
         tree(helper, 93, 21);
         int originalCeaseFire = com.shiroaki193.mod.Config.CIWS_CEASE_FIRE_TICKS.get();
         double originalPower = com.shiroaki193.mod.Config.SHELL_EXPLOSION_POWER.get();
-        com.shiroaki193.mod.Config.SHELL_EXPLOSION_POWER.set(0.0);
+        // Explosions off keeps the golems alive for every salvo, but flatters the defence: the blast of
+        // a shell shot down knocks snowballs and the rest of its salvo off course.
+        // MOBARMSRACE_MEASURE_EXPLOSIONS=1 keeps them (with shielded golems).
+        boolean explosions = "1".equals(System.getenv("MOBARMSRACE_MEASURE_EXPLOSIONS"));
+        if (!explosions) {
+            com.shiroaki193.mod.Config.SHELL_EXPLOSION_POWER.set(0.0);
+        }
         List<List<CreeperShell>> perSetting = new ArrayList<>();
         List<SnowGolem> golems = new ArrayList<>();
         int[] tick = {0};
@@ -94,8 +100,8 @@ final class VillageTests {
             if (inBlock == 0) {
                 golems.forEach(SnowGolem::discard);
                 golems.clear();
-                golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(97.5, 6, 4.5)));
-                golems.add(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(90.5, 6, 27.5)));
+                golems.add(TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(97.5, 6, 4.5))));
+                golems.add(TestSupport.shielded(helper.spawn(EntityType.SNOW_GOLEM, new Vec3(90.5, 6, 27.5))));
                 com.shiroaki193.mod.Config.CIWS_CEASE_FIRE_TICKS.set(CEASE_FIRE[block]);
                 perSetting.add(new ArrayList<>());
             }
@@ -116,8 +122,9 @@ final class VillageTests {
             for (int i = 0; i < CEASE_FIRE.length; i++) {
                 List<CreeperShell> shells = perSetting.get(i);
                 long hit = shells.stream().filter(CreeperShell::isIntercepted).count();
-                MobArmsRace.LOGGER.info("[measure-village] cease fire {} | intercepted {}/{} ({}%), {}", CEASE_FIRE[i], hit, shells.size(),
-                        hit * 100 / Math.max(1, shells.size()), TestSupport.interceptStats(helper, shells, List.of()));
+                MobArmsRace.LOGGER.info("[measure-village] cease fire {} | intercepted {}/{} ({}%), {} | {}", CEASE_FIRE[i], hit, shells.size(),
+                        hit * 100 / Math.max(1, shells.size()), TestSupport.highKills(helper, shells, 6),
+                        TestSupport.interceptStats(helper, shells, List.of()));
             }
         });
     }
@@ -133,7 +140,11 @@ final class VillageTests {
      * line of sight. Four mortars for 30 s: all fire, and at least two golems must be left.
      */
     static void golemsSurviveSiege(GameTestHelper helper) {
+        // Bomblets (a separate, random threat; see measure_siege) would make this flaky.
+        double fragmentChance = com.shiroaki193.mod.Config.FRAGMENT_CHANCE.get();
+        com.shiroaki193.mod.Config.FRAGMENT_CHANCE.set(0.0);
         siege(helper, 4, 600, false, result -> {
+            com.shiroaki193.mod.Config.FRAGMENT_CHANCE.set(fragmentChance);
             helper.assertTrue(result.shells() >= 32, "mortars behind the parapet fired only " + result.shells() + " shells");
             helper.assertTrue(result.golemsAlive() >= 2, "siege killed " + (3 - result.golemsAlive()) + " of 3 golems: " + result);
         });
@@ -193,22 +204,30 @@ final class VillageTests {
                 helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(101.5, 1, 12.5)),
                 helper.spawnWithNoFreeWill(EntityType.VILLAGER, new Vec3(101.5, 1, 20.5)));
         java.util.Set<CreeperShell> shells = new java.util.LinkedHashSet<>();
-        java.util.Map<Object, Long> deaths = new java.util.LinkedHashMap<>();
+        java.util.Map<net.minecraft.world.entity.LivingEntity, String> deaths = new java.util.LinkedHashMap<>();
         helper.onEachTick(() -> {
             shells.addAll(helper.getLevel().getEntitiesOfClass(CreeperShell.class, helper.getBounds().inflate(0, 200, 0)));
             for (var mob : java.util.stream.Stream.concat(golems.stream(), villagers.stream()).toList()) {
                 if (!mob.isAlive() && !deaths.containsKey(mob)) {
-                    deaths.put(mob, helper.getTick());
+                    // Vanilla forgets the last damage source 2 s after the hit, so read it right away.
+                    var source = mob.getLastDamageSource();
+                    String cause = source == null ? "?" : source.getDirectEntity() != null
+                            ? source.getDirectEntity().getType().toShortString() : source.getMsgId();
+                    deaths.put(mob, (mob instanceof SnowGolem ? " golem@" : " villager@") + helper.getTick() / 20.0 + "s(" + cause + ")");
                 }
             }
         });
         helper.succeedWhen(() -> {
             helper.assertTrue(helper.getTick() >= ticks, "sieging");
+            // Mortars left standing would keep shelling whatever test runs next nearby.
+            helper.getLevel().getEntitiesOfClass(com.shiroaki193.mod.entity.MortarCreeper.class, helper.getBounds().inflate(0, 64, 0))
+                    .forEach(net.minecraft.world.entity.Entity::discard);
             StringBuilder log = new StringBuilder();
-            deaths.forEach((mob, t) -> log.append(mob instanceof SnowGolem ? " golem@" : " villager@").append(t / 20.0).append("s"));
+            deaths.values().forEach(log::append);
             verdict.accept(new SiegeResult(shells.size(), shells.stream().filter(CreeperShell::isIntercepted).count(),
                     golems.stream().filter(SnowGolem::isAlive).count(), villagers.stream().filter(Villager::isAlive).count(),
-                    log.toString(), TestSupport.interceptStats(helper, List.copyOf(shells), List.of())));
+                    log.toString(), TestSupport.highKills(helper, shells, 6) + " | "
+                            + TestSupport.interceptStats(helper, List.copyOf(shells), List.of())));
         });
     }
 

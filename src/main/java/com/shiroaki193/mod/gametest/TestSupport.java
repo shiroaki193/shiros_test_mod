@@ -81,6 +81,31 @@ final class TestSupport {
     }
 
     /**
+     * Balance tests with a single mortar fire more than its life allows (shellLimit); this lifts the
+     * limit and returns the restore, to run when the test is done. The restore must run before any
+     * assertion that can fail, or the next test would find no limit.
+     */
+    static Runnable noShellLimit() {
+        int limit = com.shiroaki193.mod.Config.MORTAR_SHELL_LIMIT.get();
+        com.shiroaki193.mod.Config.MORTAR_SHELL_LIMIT.set(0);
+        return () -> com.shiroaki193.mod.Config.MORTAR_SHELL_LIMIT.set(limit);
+    }
+
+    /** Height above a golem that counts as "high" for {@link #highKills}. */
+    static final double HIGH = 60.0;
+
+    /**
+     * Of the shells that climbed at least {@link #HIGH} blocks above the golems (standing at
+     * relative height {@code golemY}), how many were shot down while still that high.
+     */
+    static String highKills(GameTestHelper helper, java.util.Collection<CreeperShell> shells, double golemY) {
+        double ref = helper.absoluteVec(new Vec3(0, golemY, 0)).y + HIGH;
+        long reached = shells.stream().filter(s -> s.getPeakY() >= ref).count();
+        long killed = shells.stream().filter(s -> s.getPeakY() >= ref && s.isIntercepted() && s.getDetonationPos().y >= ref).count();
+        return String.format("high (60+ above golem): %d/%d shot down there (%d%%)", killed, reached, killed * 100 / Math.max(1, reached));
+    }
+
+    /**
      * Keeps a mob alive through salvos (Resistance V). Interception tests use it on golems so one
      * leaking shell does not kill a golem and halve the defence for the rest of the test.
      * Invulnerable would not do: mortars never target invulnerable mobs.
@@ -99,8 +124,20 @@ final class TestSupport {
      */
     static final class ShellTally {
         private final java.util.List<CreeperShell> shells = new java.util.ArrayList<>();
+        private final java.util.List<Long> seenAt = new java.util.ArrayList<>();
         private final int count;
+        private Runnable whenDone = () -> { };
 
+        /**
+         * Tallies shells that this test launches itself, registered with {@link #add}. Searching
+         * the area misses a shell that is gone before the next scan (e.g. it hit something on its
+         * first tick), leaving the tally one short until the test times out.
+         */
+        ShellTally(int count) {
+            this.count = count;
+        }
+
+        /** Tallies the first {@code count} shells found over the test area (fired by mortars). */
         ShellTally(GameTestHelper helper, int count) {
             this.count = count;
             // Shells arc far above the test structure, so search well above it.
@@ -108,6 +145,7 @@ final class TestSupport {
                 for (CreeperShell shell : helper.getLevel().getEntitiesOfClass(CreeperShell.class, helper.getBounds().inflate(0, 200, 0))) {
                     if (this.shells.size() < count && !this.shells.contains(shell)) {
                         this.shells.add(shell);
+                        this.seenAt.add(helper.getTick());
                     }
                 }
             });
@@ -117,21 +155,78 @@ final class TestSupport {
             return this.shells;
         }
 
+        /** Runs once all shells are down, before judging (e.g. to restore a config value). */
+        ShellTally whenDone(Runnable action) {
+            this.whenDone = action;
+            return this;
+        }
+
+        CreeperShell add(GameTestHelper helper, CreeperShell shell) {
+            this.shells.add(shell);
+            this.seenAt.add(helper.getTick());
+            return shell;
+        }
+
+        /** Tick each shell was first seen, and what became of it (to diagnose a failed tally). */
+        private String describe(GameTestHelper helper) {
+            StringBuilder out = new StringBuilder();
+            for (int i = 0; i < this.shells.size(); i++) {
+                CreeperShell shell = this.shells.get(i);
+                String state = shell.isIntercepted() ? "intercepted" : shell.isDetonated() ? "detonated"
+                        : shell.isRemoved() ? "removed:" + shell.getRemovalReason()
+                        : "flying@" + helper.relativeVec(shell.position()) + " v=" + shell.getDeltaMovement() + " age " + shell.tickCount
+                                + (shell.isNoGravity() ? " noGravity" : "") + (helper.getLevel().isPositionEntityTicking(shell.blockPosition()) ? "" : " NOT-TICKING");
+                out.append(" [t").append(this.seenAt.get(i)).append(' ').append(state).append(']');
+            }
+            return out.toString();
+        }
+
         long intercepted() {
             return this.shells.stream().filter(CreeperShell::isIntercepted).count();
         }
 
+        /**
+         * Down, or frozen: once (in 1 of 7 runs) a shell hung at the same spot 8 blocks beside the
+         * arena for 1000 ticks, most likely knocked there by nearby explosions into a chunk the test
+         * server does not tick. Such a shell is out of play and counts as not intercepted.
+         */
+        private static boolean finished(GameTestHelper helper, CreeperShell shell) {
+            return shell.isRemoved() || !helper.getLevel().isPositionEntityTicking(shell.blockPosition());
+        }
+
         void succeedWhenAtLeast(GameTestHelper helper, int min, String what, java.util.function.Supplier<String> details) {
             helper.succeedWhen(() -> {
-                helper.assertTrue(this.shells.size() == this.count && this.shells.stream().allMatch(CreeperShell::isRemoved),
-                        this.shells.size() + "/" + this.count + " shells fired, some still in flight");
+                helper.assertTrue(this.shells.size() == this.count && this.shells.stream().allMatch(s -> finished(helper, s)),
+                        this.shells.size() + "/" + this.count + " shells fired, some still in flight: " + this.describe(helper));
+                this.whenDone.run();
+                // Mortars left standing would keep shelling whatever test runs next nearby.
+                helper.getLevel().getEntitiesOfClass(com.shiroaki193.mod.entity.MortarCreeper.class, helper.getBounds().inflate(0, 64, 0))
+                        .forEach(net.minecraft.world.entity.Entity::discard);
                 long hit = this.intercepted();
+                long frozen = this.shells.stream().filter(s -> !s.isRemoved()).count();
+                if (frozen > 0) {
+                    com.shiroaki193.mod.MobArmsRace.LOGGER.warn("[gametest] {}: {} shell(s) frozen in a non-ticking chunk:{}", what, frozen, this.describe(helper));
+                }
                 com.shiroaki193.mod.MobArmsRace.LOGGER.info("[gametest] {}: {}/{} intercepted{}", what, hit, this.count, details.get());
                 if (hit < min) {
                     helper.fail(what + ": only " + hit + "/" + this.count + " intercepted (need " + min + ")");
                 }
             });
         }
+    }
+
+    /**
+     * GameTestServer only clears a test's area between batches of one environment, and every test
+     * here has its own, so mobs and shells of finished tests stay in the world next door. Mortars
+     * target without line of sight (the barrier walls no longer hide the neighbours), so a mortar
+     * would pick a leftover villager 17 blocks away over its own (and a leftover mortar battery keeps
+     * firing). Tests run one at a time, so everything around outside this test's area is a leftover.
+     */
+    static void clearLeftovers(GameTestHelper helper) {
+        net.minecraft.world.phys.AABB own = helper.getBounds();
+        helper.getLevel().getEntitiesOfClass(net.minecraft.world.entity.Entity.class, own.inflate(256, 256, 256),
+                        e -> !(e instanceof net.minecraft.world.entity.player.Player) && !own.intersects(e.getBoundingBox()))
+                .forEach(net.minecraft.world.entity.Entity::discard);
     }
 
     static void removePlayer(GameTestHelper helper, ServerPlayer player) {

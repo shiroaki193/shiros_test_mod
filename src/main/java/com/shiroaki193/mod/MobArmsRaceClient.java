@@ -32,6 +32,7 @@ public class MobArmsRaceClient {
         event.registerEntityRenderer(ModEntities.MORTAR_CREEPER.get(), CreeperRenderer::new);
         // The shell renders as a flying creeper head; full-bright so it stays visible at night.
         event.registerEntityRenderer(ModEntities.CREEPER_SHELL.get(), ctx -> new ThrownItemRenderer<>(ctx, 1.5F, true));
+        event.registerEntityRenderer(ModEntities.CREEPER_BOMBLET.get(), ctx -> new ThrownItemRenderer<>(ctx, 0.6F, true));
         event.registerEntityRenderer(ModEntities.INTERCEPTOR_SNOWBALL.get(), ctx -> new ThrownItemRenderer<>(ctx, 0.6F, true));
     }
 

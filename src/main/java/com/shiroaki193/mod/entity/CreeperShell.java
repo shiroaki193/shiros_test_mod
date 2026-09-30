@@ -1,5 +1,8 @@
 package com.shiroaki193.mod.entity;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.shiroaki193.mod.Config;
 import com.shiroaki193.mod.ballistics.Ballistics;
 import com.shiroaki193.mod.registry.ModEntities;
@@ -15,28 +18,30 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrowableItemProjectile;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * The "firework + elytra creeper" mortar round. Flies the {@link Ballistics} arc with two fuzes:
  * impact (explodes on the first block or mob it hits) and proximity (air-bursts on the way down
- * next to a villager, golem or player). A shell shot down by a snow golem detonates too, so an
- * intercept close to the ground still does damage.
+ * next to a villager, golem or player). A shell shot down by a snow golem either detonates where
+ * it was hit, so an intercept close to the ground still does damage, or breaks into a few
+ * {@link CreeperBomblet}s that fall on and explode with a much smaller charge.
  */
-public class CreeperShell extends ThrowableItemProjectile {
+public class CreeperShell extends BallisticProjectile {
     private static final int TRAIL_PARTICLES_PER_TICK = 8;
-    private static final double RENDER_DISTANCE = 256.0;
+    /** Shells shot down lower than this (blocks above the ground) never break apart. */
+    private static final double MIN_BREAK_HEIGHT = 20.0;
 
-    /** Game time of this shell's last move, see {@link #hasMovedThisTick()}. */
-    private long lastMoveTime = Long.MIN_VALUE;
     private boolean detonated;
     private boolean proximityBurst;
-    private boolean intercepted;
+    private final List<CreeperBomblet> fragments = new ArrayList<>();
+    /** Highest point reached so far (for balance measurements). */
+    private double peakY = Double.NEGATIVE_INFINITY;
     private Vec3 detonationPos = Vec3.ZERO;
 
     public CreeperShell(EntityType<? extends CreeperShell> type, Level level) {
@@ -57,36 +62,9 @@ public class CreeperShell extends ThrowableItemProjectile {
     }
 
     @Override
-    protected double getDefaultGravity() {
-        return Ballistics.GRAVITY;
-    }
-
-    /**
-     * Entities tick in spawn order, so a shell (spawned after the golems) usually has not moved yet
-     * when a golem aims at it in the same game tick. Aiming must then account for that extra move,
-     * otherwise every shot arrives one tick late, which misses fast-falling shells by 2+ blocks.
-     */
-    public boolean hasMovedThisTick() {
-        return this.lastMoveTime == this.level().getGameTime();
-    }
-
-    /** Snapshot for prediction; matches what the next {@link #tick()} will do. */
-    public Ballistics.State ballisticState() {
-        Vec3 v = this.getDeltaMovement();
-        return new Ballistics.State(this.getX(), this.getY(), this.getZ(), v.x, v.y, v.z);
-    }
-
-    /** Vanilla stops rendering small projectiles at 128 blocks; shells are watched from much farther. */
-    @Override
-    public boolean shouldRenderAtSqrDistance(double distance) {
-        double max = RENDER_DISTANCE * getViewScale();
-        return distance < max * max;
-    }
-
-    @Override
     public void tick() {
         super.tick();
-        this.lastMoveTime = this.level().getGameTime();
+        this.peakY = Math.max(this.peakY, this.getY());
         if (this.level().isClientSide() && this.isAlive()) {
             spawnTrail();
         } else if (this.level() instanceof ServerLevel level && this.isAlive() && this.proximityFuzeTriggered()) {
@@ -133,7 +111,7 @@ public class CreeperShell extends ThrowableItemProjectile {
     @Override
     protected boolean canHitEntity(Entity entity) {
         // Salvos must not detonate on each other or on the creeper that launched them.
-        return !(entity instanceof CreeperShell) && !(entity instanceof Creeper) && super.canHitEntity(entity);
+        return !(entity instanceof BallisticProjectile) && !(entity instanceof Creeper) && super.canHitEntity(entity);
     }
 
     @Override
@@ -153,21 +131,52 @@ public class CreeperShell extends ThrowableItemProjectile {
     }
 
     /**
-     * Shot down mid-air. The warhead still goes off: high up that is a harmless burst, but a late
-     * intercept close to a golem or a roof hurts. The white firework shows it was shot down.
+     * Shot down mid-air. Either the warhead goes off (high up a harmless burst, but a late intercept
+     * close to a golem or a roof hurts), or the shell breaks apart into bomblets that keep most of
+     * its momentum and scatter. The white firework shows it was shot down.
      */
+    @Override
     public void intercept() {
         if (!(this.level() instanceof ServerLevel serverLevel) || this.isRemoved()) {
             return;
         }
-        this.intercepted = true;
+        this.markIntercepted();
         this.detonationPos = this.position();
         serverLevel.sendParticles(ParticleTypes.FIREWORK, true, true, this.getX(), this.getY(), this.getZ(), 40, 0.2, 0.2, 0.2, 0.25);
         serverLevel.sendParticles(ParticleTypes.CLOUD, true, true, this.getX(), this.getY(), this.getZ(), 8, 0.3, 0.3, 0.3, 0.02);
         serverLevel.playSound(null, this.getX(), this.getY(), this.getZ(), SoundEvents.FIREWORK_ROCKET_BLAST,
                 SoundSource.HOSTILE, 3.0F, 0.9F + this.random.nextFloat() * 0.2F);
-        this.explodeWarhead(serverLevel);
+        if (this.heightAboveGround(serverLevel) >= MIN_BREAK_HEIGHT && this.random.nextDouble() < Config.FRAGMENT_CHANCE.get()) {
+            this.breakApart(serverLevel);
+        } else {
+            this.explodeWarhead(serverLevel);
+        }
         this.discard();
+    }
+
+    /**
+     * Low down, the bomblets of a shell shot down right above a golem (last-ditch self-defence)
+     * would have no room to scatter and rain on the golem itself; there the warhead goes off whole.
+     */
+    private double heightAboveGround(ServerLevel level) {
+        return this.getY() - level.getHeight(Heightmap.Types.MOTION_BLOCKING, this.getBlockX(), this.getBlockZ());
+    }
+
+    private void breakApart(ServerLevel level) {
+        int min = Config.FRAGMENTS_MIN.get();
+        int max = Math.max(min, Config.FRAGMENTS_MAX.get());
+        int count = min + this.random.nextInt(max - min + 1);
+        Vec3 velocity = this.getDeltaMovement().scale(0.8);
+        for (int i = 0; i < count; i++) {
+            // Spread evenly around, with some randomness, plus a small kick up from the break.
+            double angle = (i + this.random.nextDouble() * 0.5) * Math.PI * 2 / count;
+            double push = 0.3 + this.random.nextDouble() * 0.2;
+            Vec3 kick = new Vec3(Math.cos(angle) * push, 0.1 + this.random.nextDouble() * 0.2, Math.sin(angle) * push);
+            CreeperBomblet bomblet = new CreeperBomblet(level, this.position(), velocity.add(kick));
+            level.addFreshEntity(bomblet);
+            this.fragments.add(bomblet);
+        }
+        level.sendParticles(ParticleTypes.SMOKE, true, true, this.getX(), this.getY(), this.getZ(), 12, 0.2, 0.2, 0.2, 0.05);
     }
 
     private void explodeWarhead(ServerLevel level) {
@@ -187,8 +196,13 @@ public class CreeperShell extends ThrowableItemProjectile {
         return this.proximityBurst;
     }
 
-    public boolean isIntercepted() {
-        return this.intercepted;
+    public double getPeakY() {
+        return this.peakY;
+    }
+
+    /** Bomblets this shell broke into when shot down; empty if its warhead exploded instead. */
+    public List<CreeperBomblet> getFragments() {
+        return this.fragments;
     }
 
     /** Where the shell exploded or was shot down; {@link Vec3#ZERO} while still flying. */

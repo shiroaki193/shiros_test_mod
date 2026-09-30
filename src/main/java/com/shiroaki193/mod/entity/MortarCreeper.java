@@ -3,6 +3,7 @@ package com.shiroaki193.mod.entity;
 import com.shiroaki193.mod.Config;
 import com.shiroaki193.mod.entity.ai.MortarAttackGoal;
 
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -32,6 +33,7 @@ import net.minecraft.world.level.storage.ValueOutput;
  * A creeper carrying firework-and-elytra creepers as mortar rounds. It shells villages from up to
  * 120 blocks away, reloads a full salvo after each one, and keeps firing while it has a target in
  * range. With reloading disabled it falls back to ordinary creeper behaviour once out of ammo.
+ * Every mortar has a limited life: after {@code shellLimit} shells in total it burns out and dies.
  */
 public class MortarCreeper extends Creeper {
     /** Covers the full firing range; target lookups use this attribute. */
@@ -40,6 +42,8 @@ public class MortarCreeper extends Creeper {
     private int ammo = Config.MORTAR_AMMO.get();
     private int reloadTicksLeft;
     private boolean naturalSpawn;
+    /** Shells fired over this mortar's whole life (not just this salvo). */
+    private int shellsFired;
 
     public MortarCreeper(EntityType<? extends MortarCreeper> type, Level level) {
         super(type, level);
@@ -109,11 +113,24 @@ public class MortarCreeper extends Creeper {
         this.ammo = Math.max(0, ammo);
     }
 
+    /** Called for every shell fired: uses up the salvo and counts towards the shell limit. */
     public void consumeAmmo() {
         this.setAmmo(this.ammo - 1);
         if (this.ammo == 0) {
             this.reloadTicksLeft = Config.MORTAR_RELOAD_TICKS.get();
         }
+        this.shellsFired++;
+        int limit = Config.MORTAR_SHELL_LIMIT.get();
+        if (limit > 0 && this.shellsFired >= limit && this.level() instanceof ServerLevel level) {
+            // Burnt out: the last shell took the creeper's own charge with it.
+            level.sendParticles(ParticleTypes.LARGE_SMOKE, true, true, this.getX(), this.getY() + 1.0, this.getZ(),
+                    20, 0.3, 0.5, 0.3, 0.02);
+            this.kill(level);
+        }
+    }
+
+    public int getShellsFired() {
+        return this.shellsFired;
     }
 
     /** Out of shells but refilling; the mortar holds its firing position meanwhile. */
@@ -135,6 +152,7 @@ public class MortarCreeper extends Creeper {
         output.putInt("MortarAmmo", this.ammo);
         output.putInt("MortarReload", this.reloadTicksLeft);
         output.putBoolean("MortarNaturalSpawn", this.naturalSpawn);
+        output.putInt("MortarShellsFired", this.shellsFired);
     }
 
     @Override
@@ -143,5 +161,6 @@ public class MortarCreeper extends Creeper {
         this.ammo = input.getIntOr("MortarAmmo", Config.MORTAR_AMMO.get());
         this.reloadTicksLeft = input.getIntOr("MortarReload", Config.MORTAR_RELOAD_TICKS.get());
         this.naturalSpawn = input.getBooleanOr("MortarNaturalSpawn", false);
+        this.shellsFired = input.getIntOr("MortarShellsFired", 0);
     }
 }

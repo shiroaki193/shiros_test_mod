@@ -14,6 +14,10 @@ import com.shiroaki193.mod.registry.ModItems;
 import com.shiroaki193.mod.registry.ModParticles;
 
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.attribute.EnvironmentAttributes;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -25,10 +29,12 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 
 @Mod(MobArmsRace.MODID)
 public class MobArmsRace {
@@ -46,8 +52,14 @@ public class MobArmsRace {
         modEventBus.addListener(this::registerAttributes);
         modEventBus.addListener(this::addCreative);
         NeoForge.EVENT_BUS.addListener(this::onEntityJoinLevel);
+        NeoForge.EVENT_BUS.addListener(this::onIncomingDamage);
 
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+        modEventBus.addListener((ModConfigEvent.Loading event) -> {
+            if (event.getConfig().getSpec() == Config.SPEC) {
+                Config.migrate();
+            }
+        });
     }
 
     private void registerAttributes(EntityAttributeCreationEvent event) {
@@ -80,6 +92,27 @@ public class MobArmsRace {
         } else if (event.getEntity() instanceof Cat cat && cat.entityTags().contains(ThrowCatGoal.TAG_AIRBORNE)) {
             ThrowCatGoal.release(cat);
         }
+    }
+
+    /** Weatherproof snow golems: no damage from rain, water or melting (see {@link #isWeatherDamage}). */
+    private void onIncomingDamage(LivingIncomingDamageEvent event) {
+        if (event.getEntity() instanceof SnowGolem golem && Config.CIWS_WEATHERPROOF.get() && isWeatherDamage(golem, event.getSource())) {
+            event.setCanceled(true);
+        }
+    }
+
+    /**
+     * Vanilla hurts snow golems with drown damage in water or rain, and with on-fire damage while
+     * standing in a biome where they melt. On-fire damage also comes from really burning, so it is
+     * only treated as melting while the golem is not on fire.
+     */
+    public static boolean isWeatherDamage(SnowGolem golem, DamageSource source) {
+        if (source.is(DamageTypes.DROWN)) {
+            return true;
+        }
+        return source.is(DamageTypes.ON_FIRE) && golem.getRemainingFireTicks() <= 0
+                && golem.level() instanceof ServerLevel level
+                && level.environmentAttributes().getValue(EnvironmentAttributes.SNOW_GOLEM_MELTS, golem.position());
     }
 
     private static final Identifier GOLEM_HEALTH = Identifier.fromNamespaceAndPath(MODID, "ciws_health");

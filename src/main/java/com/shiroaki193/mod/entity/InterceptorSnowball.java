@@ -19,7 +19,7 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-/** Fast, straight-flying snowball fired by a snow golem's close-in defence: downs creeper shells and hurts hostile mobs. */
+/** Fast, straight-flying snowball fired by a snow golem's close-in defence: downs shells and bomblets, and hurts hostile mobs. */
 public class InterceptorSnowball extends ThrowableItemProjectile {
     /** Shell and bullet count as touching when their paths pass this close. */
     public static final double HIT_RADIUS = 1.1;
@@ -75,7 +75,7 @@ public class InterceptorSnowball extends ThrowableItemProjectile {
         double[] from = {this.getX(), this.getY(), this.getZ()};
         Vec3 move = this.getDeltaMovement().scale(DRAG);
         double[] to = {from[0] + move.x, from[1] + move.y, from[2] + move.z};
-        for (CreeperShell shell : this.level().getEntitiesOfClass(CreeperShell.class,
+        for (BallisticProjectile shell : this.level().getEntitiesOfClass(BallisticProjectile.class,
                 this.getBoundingBox().inflate(SEARCH_RADIUS), Entity::isAlive)) {
             double[] prev = {shell.xo, shell.yo, shell.zo};
             double[] now = {shell.getX(), shell.getY(), shell.getZ()};
